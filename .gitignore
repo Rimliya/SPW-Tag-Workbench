@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+.kotlin/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# 日志与临时
+*.log
+*.spmod
+
+# 开发期内容（单元测试不入库）
+src/test/
+
+# 构建日志输出
+b*.txt

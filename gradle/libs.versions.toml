@@ -1,0 +1,19 @@
+[versions]
+spw-workshop-api = "0.1.0-dev23"
+kotlin = "2.4.20"
+compose = "1.12.1"
+coroutines = "1.10.2"
+skiko = "0.150.1"
+jaudiotagger = "3.0.1"
+jna = "5.18.1"
+
+[libraries]
+spw-workshop-api = { group = "com.github.Moriafly", name = "spw-workshop-api", version.ref = "spw-workshop-api" }
+compose-ui = { group = "org.jetbrains.compose.ui", name = "ui", version.ref = "compose" }
+compose-foundation = { group = "org.jetbrains.compose.foundation", name = "foundation", version.ref = "compose" }
+compose-animation = { group = "org.jetbrains.compose.animation", name = "animation", version.ref = "compose" }
+coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+skiko-awt = { group = "org.jetbrains.skiko", name = "skiko-awt", version.ref = "skiko" }
+jaudiotagger = { group = "net.jthink", name = "jaudiotagger", version.ref = "jaudiotagger" }
+
+jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }

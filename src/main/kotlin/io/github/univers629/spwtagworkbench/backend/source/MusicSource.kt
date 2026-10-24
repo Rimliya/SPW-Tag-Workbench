@@ -1,0 +1,218 @@
+// SPDX-FileCopyrightText: 2026 salt-workshop contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
+package io.github.univers629.spwtagworkbench.backend.source
+
+import io.github.univers629.spwtagworkbench.backend.match.Matching
+import io.github.univers629.spwtagworkbench.backend.model.TagPatch
+
+/** 音源能力。只有声明了对应能力的源才会被请求。 */
+enum class Capability {
+    /** 元数据：标题 / 艺术家 / 专辑 / 时长 */
+    META,
+
+    /** 专辑封面（ID3v2 type=3）。**不含**艺术家图 */
+    COVER,
+
+    /** 艺术家图（ID3v2 type=8）。与 [COVER] 是两个不同端点，必须分开声明。 */
+    ARTIST_COVER,
+
+    /** 歌词 */
+    LYRICAL,
+}
+
+/** 搜索输入。 */
+data class SearchQuery(
+    val title: String,
+    val artist: String = "",
+    val album: String = "",
+    val durationMs: Long = 0L,
+) {
+    /**
+     * 检索关键词。
+     *
+     * 对齐 MusicTag 的做法：有专辑就用「专辑 + 艺人」，没有专辑才退回「标题 + 艺人」。
+     * 按专辑检索结果更多且相关度更高——同一张专辑的封面天然就是目标。
+     */
+    val keyword: String
+        get() {
+            val builder = StringBuilder()
+            if (album.isNotBlank()) {
+                builder.append(album)
+                if (artist.isNotBlank()) builder.append(' ').append(artist)
+            } else {
+                builder.append(title)
+                if (artist.isNotBlank()) builder.append(' ').append(artist)
+            }
+            return builder.toString().trim()
+        }
+}
+
+/** 一个源返回的候选。 */
+data class SourceCandidate(
+    val sourceId: String,
+    val sourceLabel: String,
+    /** 源内 ID（封面可能从 A 源取、歌词从 B 源取，所以必须保留） */
+    val remoteId: String,
+    val title: String,
+    val artist: String,
+    val album: String = "",
+    val durationMs: Long = 0L,
+    /** 该候选是否带歌词 */
+    val hasLyrics: Boolean = false,
+    /** 该候选是否带封面（或可取封面） */
+    val hasCover: Boolean = false,
+    /** 歌词格式标注：lrc / spl / text / word */
+    val lyricFormat: String = "",
+    /** 封面地址（有 COVER 能力的源才填） */
+    val artworkUrl: String = "",
+    /**
+     * 艺术家图地址。
+     *
+     * 与 [artworkUrl]（专辑封面）分开：ID3v2 里它们是不同类型的图片
+     * （3 = Front Cover，8 = Artist）。QQ 和酷狗都能给到 1200px 以上的艺人图。
+     */
+    val artistArtworkUrl: String = "",
+    /** 发行年份，0 表示未知。iTunes 给日期串、QQ 给 Unix 时间戳、酷狗给 `yyyy-MM-dd`。 */
+    val year: Int = 0,
+    /** 风格 / 流派，空表示未知（目前只有 iTunes 给）。 */
+    val genre: String = "",
+    /** 专辑内音轨号，0 表示未知（只有 iTunes 给）。 */
+    val track: Int = 0,
+    /** 碟号，0 表示未知（只有 iTunes 给）。 */
+    val disc: Int = 0,
+    /**
+     * 专辑艺术家。
+     *
+     * **这些接口都不直接提供这个字段**。只在「该候选只有一个艺术家」时
+     * 才用艺术家名推断，多艺术家时留空，不猜。
+     */
+    val albumArtist: String = "",
+    /**
+     * 第二标识：某些源需要**两个 ID** 才能取到全部内容。
+     *
+     * QQ 是典型：逐行 LRC 走 `fcg_query_lyric_new.fcg` 只认 `songmid`（字母串，即 [remoteId]），
+     * 而逐字 QRC 走 `musicu.fcg GetPlayLyricInfo` 只认数字 `songID`。
+     * 只存一个会让另一半接口永远失败——实测表现为「QQ 歌词始终只有逐行」。
+     */
+    val altId: String = "",
+) {
+    val display: String get() = if (artist.isBlank()) title else "$title — $artist"
+}
+
+/** 源搜索结果：成功候选 + 失败原因（失败隔离用）。 */
+data class SourceResult(
+    val sourceId: String,
+    val sourceLabel: String,
+    val candidates: List<SourceCandidate> = emptyList(),
+    /** 非空表示这个源失败了，其它源不受影响 */
+    val failure: String = "",
+) {
+    val ok: Boolean get() = failure.isEmpty()
+}
+
+/**
+ * 音源统一契约。
+ *
+ * 各源自己实现；能力声明是必须的 —— 只有歌词能力的源不能出现在封面候选里。
+ */
+interface MusicSource {
+    val id: String
+
+    val label: String
+
+    val capabilities: Set<Capability>
+
+    /** 源权重，越大越优先（同匹配等级时用于排序）。 */
+    val weight: Int get() = 0
+
+    fun supports(capability: Capability): Boolean = capability in capabilities
+
+    /** 搜索候选。实现应自己吞掉网络异常并转成 [SourceResult.failure]。 */
+    suspend fun search(query: SearchQuery): SourceResult
+
+    /** 取封面字节。不支持封面时返回 null。 */
+    suspend fun cover(candidate: SourceCandidate): ByteArray? = null
+
+    /**
+     * 取**艺术家图**字节。
+     *
+     * 与 [cover]（专辑封面）是**两套完全不同的端点**，不要互相复用：
+     * - 专辑封面：QQ `T002…`、酷我 `/albumcover/…`、iTunes artwork
+     * - 艺术家图：QQ `T001…`、酷狗 `softhead/…`、网易云 `artist.img1v1Url`
+     *
+     * 不支持艺术家图的源返回 null，界面显示「该源无艺术家图」。
+     */
+    suspend fun artistCover(candidate: SourceCandidate): ByteArray? = null
+
+    /** 取歌词文本。不支持歌词时返回 null。 */
+    suspend fun lyrics(candidate: SourceCandidate): String? = null
+}
+
+/**
+ * 匹配判定：标题四级 + 艺术家 + 时长。
+ *
+ * 返回 1..4（越小越可信），0 表示不匹配。
+ */
+object CandidateScoring {
+    fun level(
+        query: SearchQuery,
+        candidate: SourceCandidate,
+    ): Int {
+        val titleLevel = Matching.titleLevel(query.title, candidate.title)
+        if (titleLevel == 0) return 0
+        if (!artistCompatible(query.artist, candidate.artist)) return 0
+        if (!Matching.durationMatches(query.durationMs, candidate.durationMs)) return 0
+        return titleLevel
+    }
+
+    /** 艺术家兼容：任一为空视为兼容；否则要求互相包含或相似度够高。 */
+    fun artistCompatible(
+        a: String,
+        b: String,
+    ): Boolean {
+        if (a.isBlank() || b.isBlank()) return true
+        val na = normalizeArtist(a)
+        val nb = normalizeArtist(b)
+        if (na == nb) return true
+        if (na.contains(nb) || nb.contains(na)) return true
+        return Matching.similarity(na, nb) >= 0.62
+    }
+
+    private fun normalizeArtist(value: String): String =
+        Matching
+            .toHalfWidth(value)
+            .lowercase()
+            .replace("feat.", " ")
+            .replace("&", " ")
+            .replace("/", " ")
+            .split(' ')
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+
+    /** 候选能否用于该曲目（伴奏跳过由调用方用 Matching.isMatchCandidate 判断）。 */
+    fun viable(
+        query: SearchQuery,
+        candidate: SourceCandidate,
+    ): Boolean = level(query, candidate) > 0
+}
+
+/**
+ * 候选里能写进标签的字段集合（按字段合并用）。
+ *
+ * **按字段合并，不是按记录**：某个源只给了年份、另一个源只给了风格，
+ * 两者都会进同一份 patch，不会互相覆盖。
+ */
+fun SourceCandidate.toPatch(): TagPatch =
+    TagPatch().apply {
+        if (title.isNotBlank()) set(io.github.univers629.spwtagworkbench.backend.model.TagField.Title, title)
+        if (artist.isNotBlank()) set(io.github.univers629.spwtagworkbench.backend.model.TagField.Artist, artist)
+        if (album.isNotBlank()) set(io.github.univers629.spwtagworkbench.backend.model.TagField.Album, album)
+        if (albumArtist.isNotBlank()) {
+            set(io.github.univers629.spwtagworkbench.backend.model.TagField.AlbumArtist, albumArtist)
+        }
+        if (genre.isNotBlank()) set(io.github.univers629.spwtagworkbench.backend.model.TagField.Genre, genre)
+        if (year > 0) set(io.github.univers629.spwtagworkbench.backend.model.TagField.Year, year.toString())
+        if (track > 0) set(io.github.univers629.spwtagworkbench.backend.model.TagField.Track, track.toString())
+        if (disc > 0) set(io.github.univers629.spwtagworkbench.backend.model.TagField.Disc, disc.toString())
+    }

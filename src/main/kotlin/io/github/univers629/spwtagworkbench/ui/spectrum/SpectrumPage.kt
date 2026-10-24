@@ -1,0 +1,350 @@
+// SPDX-FileCopyrightText: 2026 salt-workshop contributors
+// SPDX-License-Identifier: GPL-3.0-only
+
+package io.github.univers629.spwtagworkbench.ui.spectrum
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.dp
+import io.github.univers629.spwtagworkbench.core.EmptyState
+import io.github.univers629.spwtagworkbench.core.Salt
+import io.github.univers629.spwtagworkbench.core.T
+import io.github.univers629.spwtagworkbench.core.TapChip
+import io.github.univers629.spwtagworkbench.core.Txt
+import io.github.univers629.spwtagworkbench.data.Repo
+import io.github.univers629.spwtagworkbench.data.SpectrogramState
+import io.github.univers629.spwtagworkbench.router.SpacePage
+import io.github.univers629.spwtagworkbench.ui.space.DetailScaffold
+
+/**
+ * 频谱页。
+ *
+ * 布局与参考实现一致：**左右两个声道并排在同一张图里**（左半 L、右半 R），
+ * 图下方是一条按时序变化的彩色包络带。
+ */
+@Composable
+fun SpectrumPage(interactive: Boolean) {
+    val palette = Salt
+    val state = Repo.spectrogram
+
+    // 切到这一页就开始生成（参考项目：进页即解码）。
+    // key 用曲目路径（稳定），已有结果或正在分析时不重复触发，
+    // 避免页面切换时反复重启解码造成闪烁。
+    val focusedPath = Repo.focused().path
+    androidx.compose.runtime.LaunchedEffect(focusedPath) {
+        val meta = Repo.focused()
+        val stateNow = Repo.spectrogram
+        if (meta.path.isNotBlank() &&
+            stateNow !is SpectrogramState.Working &&
+            stateNow !is SpectrogramState.Ready
+        ) {
+            Repo.analyze(meta)
+        }
+    }
+    DetailScaffold(
+        page = SpacePage.Spectrum,
+        label = "频谱",
+        interactive = interactive,
+        // 进度走顶栏中间的蓝色进度条，不再用百分比文字
+        progress =
+            when (state) {
+                is SpectrogramState.Working -> state.progress
+                is SpectrogramState.Ready -> 1f
+                else -> null
+            },
+        actions = {
+            when (state) {
+                is SpectrogramState.Working ->
+                    TapChip(
+                        label = "取消",
+                        onClick = { Repo.cancelSpectrum() },
+                        accent = palette.warn,
+                        enabled = interactive,
+                    )
+
+                else ->
+                    TapChip(
+                        label = if (state is SpectrogramState.Idle) "生成频谱" else "重新生成",
+                        onClick = { Repo.analyze() },
+                        enabled = interactive && Repo.focused().hasFile,
+                    )
+            }
+        },
+    ) {
+        // 三种状态共用同一套结构：图（weight 1）+ 固定 42dp 彩带 + 固定 26dp 页脚。
+        // 状态切换只换内容，不换布局，避免生成完成时整页高度跳动。
+        // 页内左右留边距，内容不要贴着窗口边
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+        ) {
+            when (state) {
+                is SpectrogramState.Ready ->
+                    SpectrumImage(state.image, state.displayChannels, state.sampleRate, Modifier.weight(1f))
+
+                is SpectrogramState.Working ->
+                    if (state.image != null) {
+                        SpectrumImage(state.image, state.displayChannels, state.sampleRate, Modifier.weight(1f))
+                    } else {
+                        Box(Modifier.weight(1f).fillMaxWidth()) { Skeleton() }
+                    }
+
+                else ->
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        if (state is SpectrogramState.Idle) {
+                            EmptyState(
+                                glyph = "〜",
+                                title = if (Repo.focused().hasFile) "还没有生成频谱" else "曲目没有可读文件",
+                                hint = "点右上角生成：BASS 解码 → FFT → dB → 色表",
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            val reason = (state as? SpectrogramState.Failed)?.reason.orEmpty()
+                            EmptyState(
+                                glyph = "✕",
+                                title = "频谱生成失败",
+                                hint = reason,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+            }
+
+            Spacer(Modifier.height(10.dp))
+            when (state) {
+                is SpectrogramState.Ready -> ColorRibbon(state.envelope)
+                else -> RibbonPlaceholder()
+            }
+        }
+    }
+}
+
+/** 一张图装左右两个声道：左半 L、右半 R，各自横轴时间、纵轴频率。 */
+@Composable
+private fun SpectrumImage(
+    image: androidx.compose.ui.graphics.ImageBitmap,
+    displayChannels: Int,
+    sampleRate: Int,
+    modifier: Modifier = Modifier,
+) {
+    val palette = Salt
+    Box(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(palette.card),
+    ) {
+        Image(
+            bitmap = image,
+            contentDescription = "频谱图",
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier.fillMaxSize(),
+        )
+
+        // 声道标签：各自那一半的**顶部居中**（不再压左上角，避免与刻度抢位置）
+        Row(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
+                ChannelLabel("L 左")
+            }
+            if (displayChannels > 1) {
+                Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
+                    ChannelLabel("R 右")
+                }
+            }
+        }
+
+        // 频率刻度：**左右各一份**，镜像对称。
+        // 上限 = 奈奎斯特频率（采样率/2），按采样率自适应，不再写死 16k/8k/4k。
+        FrequencyScale(
+            sampleRate = sampleRate,
+            alignRight = false,
+            modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight(),
+        )
+        FrequencyScale(
+            sampleRate = sampleRate,
+            alignRight = true,
+            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+        )
+    }
+}
+
+/**
+ * 自适应频率刻度。
+ *
+ * 算法对齐参考项目 `drawFrequencyScale`：
+ * - 上限 = `sampleRate / 2000.0`，也就是 kHz 表示的奈奎斯特频率
+ * - 均匀切 5 段，从 0 到上限
+ * - 标签两位小数，单位 `kHz` 标在顶部
+ *
+ * 刻度是**线性**的（不是对数），因为频谱图本身就是按频率线性铺开的。
+ *
+ * @param alignRight true 时贴在图的右内侧，文字右对齐
+ */
+@Composable
+private fun FrequencyScale(
+    sampleRate: Int,
+    alignRight: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val palette = Salt
+    val maximum = maxOf(1.0, sampleRate / 2000.0)
+    val ticks = (0..4).map { maximum * it / 4.0 }
+    val horizontal = if (alignRight) Alignment.End else Alignment.Start
+
+    Column(
+        modifier =
+            modifier
+                .padding(start = if (alignRight) 0.dp else 6.dp, end = if (alignRight) 6.dp else 0.dp)
+                .padding(top = 20.dp, bottom = 6.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+        horizontalAlignment = horizontal,
+    ) {
+        // 顶部先写单位，刻度从高到低排列（图上到下 = 频率高到低）
+        Txt("kHz", size = T.micro, color = palette.textTertiary, maxLines = 1)
+        ticks.reversed().forEach { tick ->
+            Txt(
+                text = String.format(java.util.Locale.ROOT, "%.2f", tick),
+                size = T.micro,
+                color = palette.text,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** 声道标签：贴在各自那一半的顶部居中。 */
+@Composable
+private fun ChannelLabel(text: String) {
+    val palette = Salt
+    Txt(
+        text = text,
+        size = T.caption,
+        color = palette.text,
+        maxLines = 1,
+        modifier = Modifier.padding(top = 3.dp),
+    )
+}
+
+/**
+ * 彩色包络带：色相沿时间推进，高度与不透明度随能量变化，
+ * 相当于把频谱横向压成一根彩条。
+ */
+@Composable
+private fun ColorRibbon(envelope: FloatArray) {
+    val palette = Salt
+    // 高度对齐参考实现：clamp(34..48)，这里取 42dp
+    Box(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(42.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(palette.cardRaised)
+                .border(0.5.dp, palette.border, RoundedCornerShape(8.dp))
+                .drawBehind {
+                    val h = size.height
+                    if (h <= 2f) return@drawBehind
+
+                    // 六段竖向渐变，**与大频谱同向**：底部橙红 → 顶部紫。
+                    // 大图里 y 越大（越靠下）频率比越小、色相越靠前（红），
+                    // 所以彩条也必须 bottom=橙、top=紫，否则两处观感会「上下颠倒」。
+                    val stops = floatArrayOf(0f, 0.0196f, 0.1296f, 0.3844f, 0.6724f, 1f)
+                    val colors = listOf(
+                        Color(255, 92, 24),
+                        Color(255, 218, 0),
+                        Color(31, 222, 76),
+                        Color(0, 190, 215),
+                        Color(42, 72, 204),
+                        Color(91, 27, 156),
+                    )
+                    // startY = 0（顶）→ endY = h（底）：0 号色（橙）在顶、末号色（紫）在底
+                    val brush = Brush.verticalGradient(
+                        colorStops = colors.mapIndexed { i, c -> stops[i] to c }.toTypedArray(),
+                        startY = 0f,
+                        endY = h,
+                    )
+
+                    if (envelope.isEmpty()) {
+                        drawRoundRect(
+                            color = palette.border.copy(alpha = 0.4f),
+                            topLeft = Offset(0f, h - 1f),
+                            size = Size(size.width, 1f),
+                        )
+                        return@drawBehind
+                    }
+
+                    // 每一个像素列画一根从底部起算的柱子：高度 = 包络 × (h-2)
+                    val columns = size.width.toInt().coerceAtLeast(1)
+                    for (x in 0 until columns) {
+                        val source = ((x.toFloat() * envelope.size) / columns)
+                            .toInt()
+                            .coerceIn(0, envelope.size - 1)
+                        val bar = maxOf(1f, envelope[source].coerceIn(0f, 1f) * (h - 2f))
+                        drawRect(
+                            brush = brush,
+                            topLeft = Offset(x.toFloat(), h - bar),
+                            size = Size(1f, bar),
+                        )
+                    }
+                },
+    )
+}
+
+@Composable
+private fun RibbonPlaceholder() {
+    val palette = Salt
+    // 与 ColorRibbon 同高（42dp），否则生成完成的瞬间整页会跳 16dp
+    Box(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(42.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(palette.cardRaised)
+                .border(0.5.dp, palette.border, RoundedCornerShape(8.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Txt("概览带生成中…", size = T.micro, color = palette.textTertiary, maxLines = 1)
+    }
+}
+
+@Composable
+private fun Skeleton() {
+    val palette = Salt
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(10.dp))
+                .background(palette.card),
+        contentAlignment = Alignment.Center,
+    ) {
+        Txt("解码中…", size = T.caption, color = palette.textTertiary, maxLines = 1)
+    }
+}

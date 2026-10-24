@@ -1,0 +1,24 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{kt,kts}]
+# Compose 组件按官方约定用 PascalCase（CoverPage / ArtistTile …），
+# ktlint 默认的 camelCase 规则会把它们全报错，因此关闭。
+ktlint_standard_function-naming = disabled
+
+# 常量按 JVM 约定用 UPPER_SNAKE（ALBUM_COVER_HOST …），
+# 这些是 val 而不是 const val，ktlint 的 property-naming 会误判。
+ktlint_standard_property-naming = disabled
+
+# 允许在表达式体内换行（长链式调用），不强制拆行方式。
+ktlint_standard_multiline-expression-wrapping = disabled
+
+[*.{yml,yaml,md,json}]
+indent_size = 2
