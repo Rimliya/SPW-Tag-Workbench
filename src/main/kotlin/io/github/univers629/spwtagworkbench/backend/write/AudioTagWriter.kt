@@ -44,6 +44,9 @@ object AudioTagWriter {
     /** ID3v2 APIC / FLAC PICTURE 的 Front Cover（专辑封面）。 */
     const val PICTURE_FRONT_COVER = 3
 
+    /** ID3v2 APIC / FLAC PICTURE 的 Artist（艺术家图）。MP4 容器没有这种类型。 */
+    const val PICTURE_ARTIST = 8
+
     /** 临时文件标记。扫描器据此排除，避免把写了一半的副本当歌曲导入。 */
     const val TEMP_INFIX = ".spw-write-"
 
@@ -72,6 +75,14 @@ object AudioTagWriter {
         if (!target.isFile) return WriteOutcome.failure(path, "文件不存在")
         if (!target.canWrite()) return WriteOutcome.failure(path, "文件不可写（只读或权限不足）")
         if (patch.isEmpty && cover == null) return WriteOutcome.failure(path, "没有要写入的字段")
+
+        // MP4/M4A 的写前检查：加密文件、容器索引与真实数据对不上的文件都写不进去，
+        // 而且后者的典型表现是底层库抛出 `newPosition > limit`。提前拦下比写坏文件好。
+        val mp4 = Mp4Probe.inspect(target)
+        if (mp4 != null) return WriteOutcome.failure(path, mp4.message)
+        if (coverType == PICTURE_ARTIST && Mp4Probe.isMp4(target)) {
+            return WriteOutcome.failure(path, Mp4Probe.SINGLE_ARTWORK_MESSAGE)
+        }
 
         // 1. 释放播放占用
         HostBridge.releasePlaybackFor(path)
@@ -207,13 +218,17 @@ object AudioTagWriter {
         }
 
         if (cover != null) {
-            val artwork = firstArtwork(tag)
+            // 必须按类型取图：写艺术家图（type=8）时标签里通常还留着专辑封面（type=3），
+            // 取「第一张」会拿到专辑封面，大小校验必然失败。
+            val artwork = artworkOfType(tag, coverType) ?: firstArtwork(tag)
             val bytes = artworkBytes(artwork)
             if (bytes == null || bytes.isEmpty()) {
-                throw IOException("回读校验失败：封面未写入，原文件未替换")
+                throw IOException("回读校验失败：图片（type=$coverType）未写入，原文件未替换")
             }
             if (bytes.size != cover.bytes.size) {
-                throw IOException("回读校验失败：封面大小 ${bytes.size} ≠ ${cover.bytes.size}")
+                throw IOException(
+                    "回读校验失败：图片（type=$coverType）大小 ${bytes.size} ≠ ${cover.bytes.size}，原文件未替换",
+                )
             }
         }
     }
@@ -268,6 +283,32 @@ object AudioTagWriter {
             null
         }
     }
+
+    /** 取标签里指定类型的图片；没有该类型时返回 null。 */
+    private fun artworkOfType(
+        tag: Tag?,
+        pictureType: Int,
+    ): Artwork? {
+        if (tag == null) return null
+        val artworks =
+            try {
+                tag.artworkList.orEmpty()
+            } catch (_: Throwable) {
+                emptyList()
+            }
+        return pickArtworkOfType(artworks, pictureType)
+    }
+
+    /**
+     * 从图片列表里挑选指定类型的一张。
+     *
+     * 类型读不出来（抛异常）时按 Front Cover（type=3）处理，与 [safePictureType] 一致；
+     * type=0 是 ID3v2 的 Other，不等于 Front Cover，按自己的类型参与匹配。
+     */
+    internal fun pickArtworkOfType(
+        artworks: List<Artwork?>,
+        pictureType: Int,
+    ): Artwork? = artworks.firstOrNull { it != null && safePictureType(it) == pictureType }
 
     private fun artworkBytes(artwork: Artwork?): ByteArray? {
         if (artwork == null) return null
@@ -472,13 +513,30 @@ object AudioTagWriter {
 
     private fun describe(t: Throwable): String {
         val cause = t.cause ?: t
-        val raw = cause.message.orEmpty()
         return when {
             cause is java.nio.file.AccessDeniedException -> "文件被占用或无权限（宿主可能仍在播放）"
-            raw.isEmpty() -> cause.javaClass.simpleName
-            else -> "${cause.javaClass.simpleName}: ${raw.take(90)}"
+            else -> friendlyError(cause.message.orEmpty(), cause.javaClass.simpleName)
         }
     }
+
+    /**
+     * 把底层异常翻译成可读提示。
+     *
+     * 其中 `newPosition > limit: (… > …)` / `newLimit > capacity` 来自 JDK 的
+     * `java.nio.Buffer`：标签库在计算文件内部偏移时越过了缓冲区边界，多见于
+     * 容器结构异常或截断过的 M4A/AAC 文件（这类文件本来也写不进去）。
+     */
+    internal fun friendlyError(
+        raw: String,
+        typeName: String,
+    ): String =
+        when {
+            raw.contains("newPosition > limit") || raw.contains("newLimit > capacity") ->
+                "文件容器结构异常（内部偏移超出文件大小），未写入；原文件保持不变。" +
+                    "该文件需先用其他工具重新保存，或转成 FLAC/MP3 后再写入"
+            raw.isEmpty() -> typeName
+            else -> "$typeName: ${raw.take(90)}"
+        }
 
     /** 便捷入口：只改一个字段。 */
     fun writeField(
