@@ -9,11 +9,23 @@ import io.github.univers629.spwtagworkbench.backend.model.TagField
 import io.github.univers629.spwtagworkbench.backend.model.TagPatch
 import io.github.univers629.spwtagworkbench.backend.model.Track
 import io.github.univers629.spwtagworkbench.backend.model.WriteOutcome
+import io.github.univers629.spwtagworkbench.backend.read.ApeV2
+import io.github.univers629.spwtagworkbench.backend.read.ContainerKind
+import io.github.univers629.spwtagworkbench.backend.read.DffTags
+import io.github.univers629.spwtagworkbench.backend.read.Id3v2
+import io.github.univers629.spwtagworkbench.backend.read.OggTags
 import io.github.univers629.spwtagworkbench.core.Diag
+import io.github.univers629.spwtagworkbench.core.Settings
 import org.jaudiotagger.audio.AudioFile
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.Tag
+import org.jaudiotagger.tag.id3.AbstractID3v2Frame
+import org.jaudiotagger.tag.id3.AbstractID3v2Tag
+import org.jaudiotagger.tag.id3.ID3v23Tag
+import org.jaudiotagger.tag.id3.ID3v24Tag
+import org.jaudiotagger.tag.id3.framebody.AbstractFrameBodyTextInfo
+import org.jaudiotagger.tag.id3.valuepair.TextEncoding
 import org.jaudiotagger.tag.images.Artwork
 import org.jaudiotagger.tag.images.ArtworkFactory
 import java.io.File
@@ -25,27 +37,15 @@ import java.nio.file.attribute.DosFileAttributeView
 import java.nio.file.attribute.DosFileAttributes
 import java.nio.file.attribute.FileTime
 
-/**
- * 单文件标签写入。
- *
- * 流程（顺序不可改，来自原项目实测）：
- * 1. 释放宿主播放占用 —— 正在播的这首要先暂停
- * 2. 复制到同目录临时文件，**保留音频扩展名**（jaudiotagger 靠扩展名选解析器）
- * 3. 在临时文件上写标签
- * 4. 回读校验：字段真的写进去了才算成功
- * 5. **先删原文件，再改名临时文件** —— 不能 move(REPLACE_EXISTING)
- * 6. 还原原文件的 DOS 属性与修改时间
- * 7. 任一步失败：清理临时文件，原文件不动
- *
- * 刻意不用 `runCatching`：Kotlin 2.4.20 在「含 try/catch 的内联调用」上有后端崩溃
- * （`try block should start with NOP`），本项目实测遇到过。
- */
 object AudioTagWriter {
     /** ID3v2 APIC / FLAC PICTURE 的 Front Cover（专辑封面）。 */
     const val PICTURE_FRONT_COVER = 3
 
-    /** ID3v2 APIC / FLAC PICTURE 的 Artist（艺术家图）。MP4 容器没有这种类型。 */
+    /** ID3v2 APIC / FLAC PICTURE 的 Artist（艺术家图）。MP4 与 APEv2 容器没有这种类型。 */
     const val PICTURE_ARTIST = 8
+
+    /** APEv2 容器只有一套封面（`Cover Art (Front)`）。 */
+    const val APE_SINGLE_ARTWORK_MESSAGE = "APEv2 容器（APE/WV/TAK/TTA/MPC）只有一套封面，不支持单独写入艺术家图"
 
     /** 临时文件标记。扫描器据此排除，避免把写了一半的副本当歌曲导入。 */
     const val TEMP_INFIX = ".spw-write-"
@@ -107,8 +107,39 @@ object AudioTagWriter {
         try {
             Files.copy(targetPath, temp, StandardCopyOption.REPLACE_EXISTING)
 
-            applyTo(temp.toFile(), patch, cover, coverType)
-            verify(temp.toFile(), patch, cover, coverType)
+            val container = ContainerKind.detect(temp.toFile())
+            if (container == ContainerKind.AAC) {
+                // AAC 裸流没有内建标签区：标签就是文件开头的一段 ID3v2，
+                // 只重写这段前缀，音频帧一个字节不动。
+                writeId3Prefix(temp.toFile(), patch, cover, coverType)
+                verifyId3Tag(Id3v2.read(temp.toFile()), patch, cover, coverType)
+            } else if (container == ContainerKind.DFF) {
+                // DFF 把 ID3v2 放在 `ID3 ` 块里：重建块链，音频块原样保留
+                writeDff(temp.toFile(), patch, cover, coverType)
+                verifyId3Tag(DffTags.read(temp.toFile()), patch, cover, coverType)
+            } else if (container == ContainerKind.OPUS) {
+                // Opus：注释在 Ogg 第二个逻辑包里；封面存 METADATA_BLOCK_PICTURE
+                writeOggTags(temp.toFile(), patch, cover, coverType)
+                verifyOggTags(temp.toFile(), patch, cover, coverType)
+            } else if (container == ContainerKind.TTA && Id3v2.read(temp.toFile()) != null) {
+                // TTA 的主标签习惯是文件开头的 ID3v2：沿用前缀写法，并同步尾部 ID3v1
+                writeId3Prefix(temp.toFile(), patch, cover, coverType)
+                verifyId3Tag(Id3v2.read(temp.toFile()), patch, cover, coverType)
+                Id3v1.sync(temp.toFile(), patch)
+            } else if (container.isApeV2) {
+                // APEv2（APE / WV / TAK / TTA / MPC）：标签在文件尾部，只重写尾部即可。
+                // 这类容器只有一套封面，写艺术家图会顶掉专辑封面，直接拒绝。
+                if (coverType == PICTURE_ARTIST) {
+                    return WriteOutcome.failure(path, APE_SINGLE_ARTWORK_MESSAGE)
+                }
+                writeApeV2(temp.toFile(), patch, cover)
+                verifyApeV2(temp.toFile(), patch, cover)
+            } else {
+                applyTo(temp.toFile(), patch, cover, coverType)
+                verify(temp.toFile(), patch, cover, coverType)
+                // MP3 等容器常同时带 ID3v1：同步它，避免播放器读到旧值
+                Id3v1.sync(temp.toFile(), patch)
+            }
 
             // 5. 先删后改名
             replaceByDeleteThenRename(targetPath, temp)
@@ -169,7 +200,7 @@ object AudioTagWriter {
         coverType: Int = PICTURE_FRONT_COVER,
     ) {
         val audio = AudioFileIO.read(file)
-        val tag = tagOf(audio)
+        val tag = alignId3Tag(audio)
 
         for ((field, value) in patch.entries) {
             val key = fieldKey(field)
@@ -192,7 +223,58 @@ object AudioTagWriter {
             addArtwork(tag, artwork)
         }
 
+        applyId3Encoding(tag)
         AudioFileIO.write(audio)
+    }
+
+    /**
+     * 按设置把 ID3v2 文本帧重编码：2.3 用 UTF-16，2.4 用 UTF-8。
+     *
+     * 逐帧设置而不是只调标签级 `setEncoding`：转换版本时帧是从旧标签复制过来的，
+     * 仍带着旧编码（实测 2.3→2.4 后仍然是 UTF-16）。
+     */
+    private fun applyId3Encoding(tag: Tag) {
+        val id3 = tag as? AbstractID3v2Tag ?: return
+        val utf8 = (id3.majorVersion.toInt() and 0xFF) == 4
+        val encodingId =
+            runCatching {
+                TextEncoding.getInstanceOf().getIdForCharset(if (utf8) Charsets.UTF_8 else Charsets.UTF_16)
+            }.getOrDefault(-1)
+        if (encodingId < 0) return
+        val fields = runCatching { id3.fields }.getOrNull() ?: return
+        while (fields.hasNext()) {
+            val frame = fields.next() as? AbstractID3v2Frame ?: continue
+            runCatching {
+                val body = frame.body
+                if (body is AbstractFrameBodyTextInfo) body.setTextEncoding(encodingId.toByte())
+            }
+        }
+    }
+
+    /**
+     * 按设置把 ID3v2 标签对齐到指定版本。
+     *
+     * 只对「本来就是 ID3v2」或「扩展名属于 ID3 体系」的文件动手；
+     * 其它容器（FLAC/Vorbis/APEv2/MP4）返回原标签，不在这里改。
+     */
+    private fun alignId3Tag(audio: AudioFile): Tag {
+        val desired = Settings.id3v2Version
+        val targetMajor = if (desired == 4) 4 else 3
+        val existing = audio.tag
+        if (existing is AbstractID3v2Tag && (existing.majorVersion.toInt() and 0xFF) == targetMajor) {
+            return existing
+        }
+        val id3Container = existing is AbstractID3v2Tag
+        if (!id3Container && existing != null) return existing
+        val converted: Tag =
+            when {
+                existing is AbstractID3v2Tag && targetMajor == 3 -> ID3v23Tag(existing)
+                existing is AbstractID3v2Tag && targetMajor == 4 -> ID3v24Tag(existing)
+                targetMajor == 3 -> ID3v23Tag()
+                else -> ID3v24Tag()
+            }
+        runCatching { audio.setTag(converted) }
+        return converted
     }
 
     // ── 回读校验 ────────────────────────────────────────────────────────────
@@ -419,6 +501,253 @@ object AudioTagWriter {
             TagField.Comment -> FieldKey.COMMENT
             TagField.Lyrics -> FieldKey.LYRICS
         }
+
+    // ── ID3v2 系：AAC 前置标签 / DFF 的 ID3 块 ───────────────────────────────
+
+    /** 字段与 ID3v2 帧 ID 的对应关系（年份字段随版本变化）。 */
+    internal fun id3FrameId(
+        field: TagField,
+        major: Int,
+    ): String =
+        when (field) {
+            TagField.Title -> "TIT2"
+            TagField.Artist -> "TPE1"
+            TagField.Album -> "TALB"
+            TagField.AlbumArtist -> "TPE2"
+            TagField.Genre -> "TCON"
+            TagField.Year -> Id3v2.yearFrameId(major)
+            TagField.Track -> "TRCK"
+            TagField.Disc -> "TPOS"
+            TagField.Lyricist -> "TEXT"
+            TagField.Composer -> "TCOM"
+            TagField.Comment -> "COMM"
+            TagField.Lyrics -> "USLT"
+        }
+
+    /** 在原有标签基础上合并补丁与封面，按设置构造 v2.3/v2.4 字节。 */
+    private fun buildId3TagBytes(
+        existing: Id3v2.Tag?,
+        patch: TagPatch,
+        cover: CoverArt?,
+        coverType: Int,
+    ): ByteArray {
+        val major = if (Settings.id3v2Version == 4) 4 else 3
+        val fields = LinkedHashMap<String, String>(existing?.fields.orEmpty())
+        // 年份帧在不同版本里名字不同，切换时先清掉旧的
+        fields.remove("TYER")
+        fields.remove("TDRC")
+        val lyrics: String? =
+            patch.value(TagField.Lyrics)?.let { if (it.isBlank()) null else it } ?: existing?.lyrics
+        for ((field, value) in patch.entries) {
+            if (field == TagField.Lyrics) continue
+            val id = id3FrameId(field, major)
+            if (value.isBlank()) fields.remove(id) else fields[id] = value
+        }
+        val pictures = existing?.pictures.orEmpty().toMutableList()
+        if (cover != null) {
+            val type = if (coverType == PICTURE_ARTIST) PICTURE_ARTIST else PICTURE_FRONT_COVER
+            pictures.removeAll { it.type == type }
+            pictures += Id3v2.Picture(type = type, mime = cover.mime, description = "", bytes = cover.bytes)
+        }
+        return Id3v2.build(version = major, values = fields, lyrics = lyrics, pictures = pictures)
+    }
+
+    /** 前置 ID3v2（AAC 裸流、带 ID3v2 的 TTA）：只重写前缀，音频不动。 */
+    private fun writeId3Prefix(
+        file: File,
+        patch: TagPatch,
+        cover: CoverArt?,
+        coverType: Int,
+    ) {
+        val bytes = file.readBytes()
+        val existing = Id3v2.readAt(bytes, 0)
+        val oldSize = existing?.totalSize ?: 0
+        if (oldSize > bytes.size) throw IOException("ID3v2 标签长度超出文件大小，未写入")
+        val tagBytes = buildId3TagBytes(existing, patch, cover, coverType)
+        val audio = bytes.copyOfRange(oldSize, bytes.size)
+        file.writeBytes(tagBytes + audio)
+    }
+
+    /** DFF：标签是文件里的 `ID3 ` 块，重建块链后追加在末尾（音频块原样保留）。 */
+    private fun writeDff(
+        file: File,
+        patch: TagPatch,
+        cover: CoverArt?,
+        coverType: Int,
+    ) {
+        val existing = DffTags.read(file)
+        val tagBytes = buildId3TagBytes(existing, patch, cover, coverType)
+        DffTags.write(file, tagBytes)
+    }
+
+    /** 回读校验（AAC / DFF 共用）。 */
+    private fun verifyId3Tag(
+        tag: Id3v2.Tag?,
+        patch: TagPatch,
+        cover: CoverArt?,
+        coverType: Int,
+    ) {
+        if (tag == null) throw IOException("回读校验失败：ID3v2 标签未写入，原文件未替换")
+        val major = tag.major
+        for ((field, expectedRaw) in patch.entries) {
+            val expected = expectedRaw.trim()
+            val actual =
+                if (field == TagField.Lyrics) {
+                    tag.lyrics.orEmpty()
+                } else {
+                    tag.text(id3FrameId(field, major)).orEmpty()
+                }
+            if (!sameValue(field, actual, expected)) {
+                throw IOException(
+                    "回读校验失败：${field.label} 实际为「${actual.take(24)}」，期望「${expected.take(24)}」，原文件未替换",
+                )
+            }
+        }
+        if (cover != null) {
+            val type = if (coverType == PICTURE_ARTIST) PICTURE_ARTIST else PICTURE_FRONT_COVER
+            val hit = tag.pictures.firstOrNull { it.type == type }
+            if (hit == null || hit.bytes.size != cover.bytes.size) {
+                throw IOException("回读校验失败：图片（ID3v2）大小不符，原文件未替换")
+            }
+        }
+    }
+    // ── Opus（OggTags）──────────────────────────────────────────────────────
+
+    /** 字段与 Vorbis/Opus 注释键的对应关系。 */
+    internal fun oggKeyOf(field: TagField): String =
+        when (field) {
+            TagField.Title -> "TITLE"
+            TagField.Artist -> "ARTIST"
+            TagField.Album -> "ALBUM"
+            TagField.AlbumArtist -> "ALBUMARTIST"
+            TagField.Genre -> "GENRE"
+            TagField.Year -> "DATE"
+            TagField.Track -> "TRACKNUMBER"
+            TagField.Disc -> "DISCNUMBER"
+            TagField.Lyricist -> "LYRICIST"
+            TagField.Composer -> "COMPOSER"
+            TagField.Comment -> "COMMENT"
+            TagField.Lyrics -> "LYRICS"
+        }
+
+    private fun writeOggTags(
+        file: File,
+        patch: TagPatch,
+        cover: CoverArt?,
+        coverType: Int,
+    ) {
+        val values = LinkedHashMap<String, String?>()
+        for ((field, value) in patch.entries) {
+            values[oggKeyOf(field)] = if (value.isBlank()) null else value
+        }
+        val pictures =
+            if (cover == null) {
+                null
+            } else {
+                val type = if (coverType == PICTURE_ARTIST) PICTURE_ARTIST else PICTURE_FRONT_COVER
+                OggTags.pictures(file).filter { it.type != type } +
+                    OggTags.Picture(type = type, mime = cover.mime, bytes = cover.bytes)
+            }
+        OggTags.write(file, values, pictures)
+    }
+
+    private fun verifyOggTags(
+        file: File,
+        patch: TagPatch,
+        cover: CoverArt?,
+        coverType: Int,
+    ) {
+        val comment = OggTags.read(file) ?: throw IOException("回读校验失败：OpusTags 未写入，原文件未替换")
+        if (cover != null) {
+            val type = if (coverType == PICTURE_ARTIST) PICTURE_ARTIST else PICTURE_FRONT_COVER
+            val hit = OggTags.pictures(file).firstOrNull { it.type == type }
+            if (hit == null || hit.bytes.size != cover.bytes.size) {
+                throw IOException("回读校验失败：图片（Opus）大小不符，原文件未替换")
+            }
+        }
+        for ((field, expectedRaw) in patch.entries) {
+            val expected = expectedRaw.trim()
+            val actual = comment.text(oggKeyOf(field)).orEmpty()
+            if (!sameValue(field, actual, expected)) {
+                throw IOException(
+                    "回读校验失败：${field.label} 实际为「${actual.take(24)}」，期望「${expected.take(24)}」，原文件未替换",
+                )
+            }
+        }
+    }
+
+    // ── APEv2 ────────────────────────────────────────────────────────────────
+
+    /** 字段与 APEv2 键的对应关系（键名按 APEv2 惯例）。 */
+    internal fun apeKeyOf(field: TagField): String =
+        when (field) {
+            TagField.Title -> ApeV2.Key.TITLE
+            TagField.Artist -> ApeV2.Key.ARTIST
+            TagField.Album -> ApeV2.Key.ALBUM
+            TagField.AlbumArtist -> ApeV2.Key.ALBUM_ARTIST
+            TagField.Genre -> ApeV2.Key.GENRE
+            TagField.Year -> ApeV2.Key.YEAR
+            TagField.Track -> ApeV2.Key.TRACK
+            TagField.Disc -> ApeV2.Key.DISC
+            TagField.Lyricist -> "Lyricist"
+            TagField.Composer -> "Composer"
+            TagField.Comment -> ApeV2.Key.COMMENT
+            TagField.Lyrics -> ApeV2.Key.LYRICS
+        }
+
+    /** 封面在 APEv2 里是「文件名 + 0 + 图片字节」。 */
+    internal fun apeCoverValue(cover: CoverArt): ByteArray {
+        val ext =
+            when (cover.mime.lowercase()) {
+                "image/png" -> "png"
+                "image/webp" -> "webp"
+                "image/gif" -> "gif"
+                "image/bmp" -> "bmp"
+                else -> "jpg"
+            }
+        return "cover.$ext".toByteArray(Charsets.UTF_8) + byteArrayOf(0) + cover.bytes
+    }
+
+    private fun writeApeV2(
+        file: File,
+        patch: TagPatch,
+        cover: CoverArt?,
+    ) {
+        val values = LinkedHashMap<String, ByteArray?>()
+        for ((field, value) in patch.entries) {
+            values[apeKeyOf(field)] = if (value.isBlank()) null else value.toByteArray(Charsets.UTF_8)
+        }
+        cover?.let { values[ApeV2.Key.COVER_FRONT] = apeCoverValue(it) }
+        ApeV2.write(file, values)
+    }
+
+    private fun verifyApeV2(
+        file: File,
+        patch: TagPatch,
+        cover: CoverArt?,
+    ) {
+        val tag = ApeV2.read(file) ?: throw IOException("回读校验失败：APEv2 标签未写入，原文件未替换")
+        for ((field, expectedRaw) in patch.entries) {
+            val expected = expectedRaw.trim()
+            val actual = tag.text(apeKeyOf(field)).orEmpty()
+            if (!sameValue(field, actual, expected)) {
+                throw IOException(
+                    "回读校验失败：${field.label} 实际为「${actual.take(24)}」，期望「${expected.take(24)}」，原文件未替换",
+                )
+            }
+        }
+        if (cover != null) {
+            val item =
+                tag.item(ApeV2.Key.COVER_FRONT)
+                    ?: throw IOException("回读校验失败：图片（APEv2）未写入，原文件未替换")
+            val bytes = ApeV2.coverBytes(item.value)
+            if (bytes.size != cover.bytes.size) {
+                throw IOException(
+                    "回读校验失败：图片（APEv2）大小 ${bytes.size} ≠ ${cover.bytes.size}，原文件未替换",
+                )
+            }
+        }
+    }
 
     // ── 文件替换与属性 ──────────────────────────────────────────────────────
 

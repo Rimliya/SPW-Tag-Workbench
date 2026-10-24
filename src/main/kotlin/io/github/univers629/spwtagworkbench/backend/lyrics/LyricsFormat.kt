@@ -922,7 +922,8 @@ object LyricsFormat {
      */
     private fun krcLanguageTracks(raw: String): LanguageTracks {
         val tag =
-            raw.lineSequence()
+            raw
+                .lineSequence()
                 .map { it.trimStart() }
                 .firstOrNull { it.startsWith("[language:") }
                 ?: return LanguageTracks()
@@ -931,7 +932,12 @@ object LyricsFormat {
         val json =
             runCatching {
                 val padded = payload + "=".repeat((4 - payload.length % 4) % 4)
-                val decoded = String(java.util.Base64.getDecoder().decode(padded), Charsets.UTF_8)
+                val decoded = String(
+                    java.util.Base64
+                        .getDecoder()
+                        .decode(padded),
+                    Charsets.UTF_8,
+                )
                 Json.parse(decoded)
             }.getOrNull() ?: return LanguageTracks()
         var translation: List<String> = emptyList()
@@ -939,7 +945,10 @@ object LyricsFormat {
         for (track in json.arr("content")) {
             val lines =
                 track.arr("lyricContent").map { row ->
-                    row.let { it as? Json.Arr }?.items.orEmpty()
+                    row
+                        .let { it as? Json.Arr }
+                        ?.items
+                        .orEmpty()
                         .mapNotNull { (it as? Json.Str)?.value }
                         .joinToString("")
                 }
@@ -1027,7 +1036,10 @@ object LyricsFormat {
         }
 
     /** 取与逐字行时间最接近的一条轨道文本，超出容差返回 null。 */
-    private fun trackAt(track: List<Pair<Long, String>>, startMs: Long): String? {
+    private fun trackAt(
+        track: List<Pair<Long, String>>,
+        startMs: Long,
+    ): String? {
         if (track.isEmpty()) return null
         val hit = track.minByOrNull { kotlin.math.abs(it.first - startMs) } ?: return null
         if (kotlin.math.abs(hit.first - startMs) > TRACK_TOLERANCE_MS) return null

@@ -605,9 +605,11 @@ object Repo {
     /** 艺术家页左栏的分辨率 · 体积描述；没有图时为空串。 */
     val artistPreviewInfo: String
         get() =
-            artistSlots.firstOrNull()?.let { slot ->
-                infoOfSize(slot.width, slot.height, slot.bytes)
-            }.orEmpty()
+            artistSlots
+                .firstOrNull()
+                ?.let { slot ->
+                    infoOfSize(slot.width, slot.height, slot.bytes)
+                }.orEmpty()
 
     /** 封面预览的信息（分辨率 · 体积）：本地封面或已写入草稿的候选图。 */
     var localCoverInfo by mutableStateOf("")

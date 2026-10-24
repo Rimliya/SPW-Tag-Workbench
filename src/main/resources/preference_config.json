@@ -27,6 +27,21 @@
           "default_value": "fill"
         },
         {
+          "type": "list",
+          "key": "tags.id3v2",
+          "title": "ID3v2 写入格式",
+          "summary": "ID3v2.3 + UTF-16 兼容性最好；ID3v2.4 + UTF-8 体积更小、新播放器支持更好",
+          "entries": [
+            "ID3v2.3 UTF-16（兼容性最好）",
+            "ID3v2.4 UTF-8（体积更小）"
+          ],
+          "entry_values": [
+            "23",
+            "24"
+          ],
+          "default_value": "23"
+        },
+        {
           "type": "switch",
           "key": "sidebar.rail",
           "title": "显示侧栏悬浮按钮",

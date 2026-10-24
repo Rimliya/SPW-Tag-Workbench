@@ -166,6 +166,10 @@ class MainPlugin(
      */
     private var topLevelHandle: AutoCloseable? = null
 
+    /** 是否因为替换体失败而把界面强制成不透明（用于透传成功后恢复材质）。 */
+    @Volatile
+    private var forceOpaqueByReplace = false
+
     private fun installTopLevelSidebar() {
         topLevelHandle =
             runCatching {
@@ -239,19 +243,64 @@ class MainPlugin(
         }
 
     /**
-     * 看门狗：确认透传体确实被组合过。
+     * 看门狗：确认透传体被组合过；失败时重试注册，成功后恢复材质。
      *
-     * 注册成功只代表「没抛异常」。若替换体没跑，宿主内容区会空白（设置页卡加载）。
-     * 等不到存活信号就关掉替换句柄 —— 宿主恢复自绘，插件界面不受影响。
+     * 注册成功只代表「没抛异常」。宿主什么时候把内容区组合起来是不确定的：
+     * 实测同一份构建，有时 2.5 秒内就调用替换体，有时更晚——固定超时会让材质
+     * 「时灵时不灵」。因此这里按轮次探测：
+     *
+     * | 情况 | 判据 | 处理 |
+     * | --- | --- | --- |
+     * | 正常 | 存活信号已置位 | 记日志；若之前因失败置过 `forceOpaque`，清回去 |
+     * | 组合失败（会白屏） | 进入过组合但没有存活信号 | 关掉替换避免白屏，隔一会重装钩子再试 |
+     * | 宿主尚未调用 | 一次都没进入组合 | 继续等；整轮都没动静就重装钩子再试 |
+     *
+     * 总预算约 [REPLACE_MAX_ATTEMPTS] ×（[REPLACE_WAIT_MS] + [REPLACE_RETRY_DELAY_MS]），
+     * 仍然失败才彻底放弃并保持不透明。
      */
     private fun startReplaceWatchdog() {
         Thread({
             runCatching {
-                Thread.sleep(REPLACE_PROBE_MS)
+                var attempt = 0
+                while (attempt < REPLACE_MAX_ATTEMPTS && !ShellState.replaceAlive) {
+                    attempt++
+                    val deadline = System.currentTimeMillis() + REPLACE_WAIT_MS
+                    while (System.currentTimeMillis() < deadline && !ShellState.replaceAlive) {
+                        Thread.sleep(250)
+                    }
+                    if (ShellState.replaceAlive) break
+                    Diag.log(
+                        "material: replace 第 $attempt 轮未存活 " +
+                            "invocations=${ShellState.replaceInvocations} err=${ShellState.replaceError ?: "-"}",
+                    )
+                    if (ShellState.replaceInvocations > 0) {
+                        // 进入过组合却没走完：保留替换会白屏，先关掉
+                        runCatching { replaceHandle?.close() }
+                        replaceHandle = null
+                        forceOpaqueByReplace = true
+                        Settings.forceOpaque = true
+                    } else {
+                        // 宿主没调用过：可能注册时宿主的这一帧已经过去了，重装一次钩子
+                        runCatching { replaceHandle?.close() }
+                        replaceHandle = null
+                    }
+                    if (attempt < REPLACE_MAX_ATTEMPTS) {
+                        Thread.sleep(REPLACE_RETRY_DELAY_MS)
+                        ShellState.replaceInvocations = 0
+                        ShellState.replaceError = null
+                        tryInstallReplace()
+                    }
+                }
                 if (ShellState.replaceAlive) {
                     Diag.log("material: replace alive ✓ (宿主内容透传中)")
+                    if (forceOpaqueByReplace) {
+                        // 之前失败时把界面转成了不透明，现在透传成功要恢复材质
+                        Settings.forceOpaque = false
+                        forceOpaqueByReplace = false
+                        Diag.log("material: 恢复材质（forceOpaque=false）")
+                    }
                 } else {
-                    Diag.log("material: replace DEAD (透传体未渲染) -> 关闭替换，宿主自绘")
+                    Diag.log("material: replace 最终失败 -> 关闭替换，宿主自绘（界面保持不透明）")
                     runCatching { replaceHandle?.close() }
                     replaceHandle = null
                     Settings.forceOpaque = true
@@ -304,8 +353,14 @@ class MainPlugin(
          */
         private const val NAV_CALLER = "androidx.compose.ui.\u0443"
 
-        /** 替换体存活探测等待。留足首帧时间，避免误判后误退。 */
-        private const val REPLACE_PROBE_MS = 2500L
+        /** 每轮等宿主调用替换体的时长。留足首帧时间，避免误判。 */
+        private const val REPLACE_WAIT_MS = 3_000L
+
+        /** 失败后重装钩子再试的间隔。 */
+        private const val REPLACE_RETRY_DELAY_MS = 3_000L
+
+        /** 最多重试几轮；总预算约 24 秒。 */
+        private const val REPLACE_MAX_ATTEMPTS = 4
 
         /** 设置页按钮入口。 */
         @JvmStatic
@@ -326,7 +381,9 @@ class MainPlugin(
         fun openSourcePage() {
             try {
                 check(java.awt.Desktop.isDesktopSupported()) { "当前环境不支持打开浏览器" }
-                java.awt.Desktop.getDesktop().browse(java.net.URI.create(SOURCE_URL))
+                java.awt.Desktop
+                    .getDesktop()
+                    .browse(java.net.URI.create(SOURCE_URL))
             } catch (t: Throwable) {
                 // 宿主环境里调不起浏览器时给可见反馈，不静默失败
                 Diag.log("openSourcePage 失败：${t.javaClass.simpleName} ${t.message.orEmpty().take(80)}")

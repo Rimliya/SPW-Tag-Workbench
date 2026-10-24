@@ -33,6 +33,15 @@ object Settings {
         private set
 
     /**
+     * 写 MP3 等 ID3v2 容器时使用的标签版本与文本编码。
+     *
+     * 3 = ID3v2.3 + UTF-16，4 = ID3v2.4 + UTF-8；由宿主「模组管理」页的
+     * `tags.id3v2` 列表项控制，默认 3（旧播放器兼容性更好）。
+     */
+    var id3v2Version by mutableStateOf(3)
+        internal set
+
+    /**
      * 强制不透明：`replaceComposable` 失败时置位。
      * 那种情况下宿主内容还在自己画，让页面透明不会透出材质，只会露出宿主 UI。
      */
@@ -115,6 +124,14 @@ object Settings {
                 config.get<String>(MATCHING_POLICY_KEY, "fill") ?: "fill"
             }.getOrDefault("fill")
         // 音源开关也从配置读，宿主「模组管理」页改完才能反映到工具栏下拉
+        id3v2Version =
+            runCatching {
+                when (config.get<String>(ID3V2_VERSION_KEY, "23") ?: "23") {
+                    "24" -> 4
+                    else -> 3
+                }
+            }.getOrDefault(3)
+        // 音源开关也从配置读，宿主「模组管理」页改完才能反映到工具栏下拉
         for (id in sourceEnabled.keys.toList()) {
             sourceEnabled[id] =
                 runCatching {
@@ -125,4 +142,5 @@ object Settings {
 
     private const val SHOW_ARTIST_SLOTS_KEY = "view.showArtistSlots"
     private const val MATCHING_POLICY_KEY = "matching.policy"
+    private const val ID3V2_VERSION_KEY = "tags.id3v2"
 }

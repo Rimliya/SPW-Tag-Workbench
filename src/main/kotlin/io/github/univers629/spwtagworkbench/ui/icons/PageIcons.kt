@@ -17,6 +17,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.PathParser
 
+// 换算基准：以 deepseek-harness 的 ui-primitives 图标为标准，
+// viewBox 16、中等线宽 1.3、圆头圆角 → 比例 1.3 / 16
+
 /**
  * 主界面全部矢量图标（Compose Canvas 自绘）。
  *
@@ -32,9 +35,6 @@ import androidx.compose.ui.graphics.vector.PathParser
  * 频谱与打轴取自参考项目 SyncIcons.spectrum / SyncIcons.waveform 的形状语言；
  * 其余为本项目自绘。
  */
-
-// 统一规范：以 deepseek-harness 的 ui-primitives 图标为标准
-// viewBox 16、中等线宽 1.3、圆头圆角 → 换算为比例 1.3 / 16
 private const val STROKE = 1.3f / 16f
 private const val FRAME_LEFT = 0.14f
 private const val FRAME_TOP = 0.16f

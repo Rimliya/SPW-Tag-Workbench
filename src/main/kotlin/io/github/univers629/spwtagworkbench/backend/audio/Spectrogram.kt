@@ -425,12 +425,10 @@ object Spectrogram {
     @Volatile
     private var native: BassNative? = null
 
-    /**
-     * 供 [Waveform] 复用同一个 BASS 连接。
-     *
-     * BASS 是进程级单例库，重复 `Native.load` 会拿到同一份原生状态，
-     * 但会多建一层 JNA 代理；这里统一走一个入口更稳妥。
-     */
+    // 供 Waveform 复用同一个 BASS 连接：
+    // BASS 是进程级单例库，重复 `Native.load` 会拿到同一份原生状态，
+    // 但会多建一层 JNA 代理；统一走一个入口更稳妥。
+
     /**
      * BASS 加载/初始化的互斥锁。
      *

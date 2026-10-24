@@ -28,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -43,12 +44,13 @@ import io.github.univers629.spwtagworkbench.core.Card
 import io.github.univers629.spwtagworkbench.core.Diag
 import io.github.univers629.spwtagworkbench.core.FieldBox
 import io.github.univers629.spwtagworkbench.core.Glyph
+import io.github.univers629.spwtagworkbench.core.LocalPalette
 import io.github.univers629.spwtagworkbench.core.Salt
 import io.github.univers629.spwtagworkbench.core.Settings
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.Txt
 import io.github.univers629.spwtagworkbench.core.fmtTime
-import io.github.univers629.spwtagworkbench.core.overlaySolid
+import io.github.univers629.spwtagworkbench.core.sidebarSolid
 import io.github.univers629.spwtagworkbench.data.Repo
 import io.github.univers629.spwtagworkbench.data.Status
 import io.github.univers629.spwtagworkbench.data.Tags
@@ -59,9 +61,11 @@ import io.github.univers629.spwtagworkbench.router.SpaceMetrics
 import io.github.univers629.spwtagworkbench.router.SpacePage
 import io.github.univers629.spwtagworkbench.router.SpaceRouter
 import io.github.univers629.spwtagworkbench.ui.DraggableFab
+import io.github.univers629.spwtagworkbench.ui.NoIndication
 import io.github.univers629.spwtagworkbench.ui.PanelEase
 import io.github.univers629.spwtagworkbench.ui.PanelMs
 import io.github.univers629.spwtagworkbench.ui.icons.IconChevronRight
+import io.github.univers629.spwtagworkbench.ui.rememberHostPalette
 import io.github.univers629.spwtagworkbench.ui.space.CoverThumb
 
 /** 侧栏自身的开合。只控制这一个面板，不控制任何页面显隐。 */
@@ -117,7 +121,17 @@ private val TITLEBAR_SAFE_TOP = 44.dp
 @Composable
 fun SidebarLayer() {
     if (SidebarLayerState.location != SidebarLayerLocation.TOP) return
-    SidebarContent()
+    // 层级 A 挂在宿主自己的 composition 里，**拿不到** PluginOverlay 提供的
+    // LocalPalette：不在这层重新提供的话，[Salt] 会退回默认的 darkSolid
+    // （material = false），于是材质模式下 FAB 与面板反而全是不透明色。
+    val palette = rememberHostPalette()
+    CompositionLocalProvider(
+        LocalPalette provides palette,
+        // 与 PluginOverlay 保持一致：不画点击波纹
+        androidx.compose.foundation.LocalIndication provides NoIndication,
+    ) {
+        SidebarContent()
+    }
 }
 
 /**
@@ -134,6 +148,7 @@ fun SidebarLayer() {
 @Composable
 fun SidebarHost() {
     if (SidebarLayerState.location == SidebarLayerLocation.TOP) return
+    // 层级 B 在 PluginOverlay 子树内，色板与波纹已在外面提供好
     SidebarContent()
 }
 
@@ -205,12 +220,12 @@ private fun SidebarPanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // **侧栏面板取浮层实色配方**（材质下 90% 不透明，见 Palette.overlaySolid）。
+    // **侧栏面板取浮层配方、材质下压到 75%**（[Palette.sidebarSolid]，
+    // 与悬浮按钮同一档不透明度；弹窗/下拉仍是 90%）。
     //
-    // 半透明底在 Win11 材质下与背后的宿主内容重叠；宿主隐身机制是整棵树
-    // 全有或全无（guide §9.8），做不到只隐藏面板那 340dp 竖带背后的一条。
-    // 取浮层配方最干净，而且 darkSolid/lightSolid 是现成的校准配色。
-    val palette = Salt.overlaySolid
+    // 半透明底在 Win11 材质下与背后内容重叠，所以用浮层那套校准过的实色底，
+    // 只是把不透明度从 90% 降到 75%，让材质透出来一些。
+    val palette = Salt.sidebarSolid
     val track = Repo.track
     val original = if (track.isPresent) track else Repo.focused()
     // 预览制：显示草稿合成后的值

@@ -69,6 +69,8 @@ import io.github.univers629.spwtagworkbench.core.Settings
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
+import io.github.univers629.spwtagworkbench.core.fabCard
+import io.github.univers629.spwtagworkbench.core.fabCardRaised
 import io.github.univers629.spwtagworkbench.core.saltPalette
 import io.github.univers629.spwtagworkbench.data.Drafts
 import io.github.univers629.spwtagworkbench.data.Repo
@@ -129,6 +131,13 @@ fun RetainedHostContent(
 
 @Composable
 fun HostPassthrough() {
+    // 进入替换体就记一次：看门狗据此区分「宿主没调用替换体」和
+    // 「调用了但组合中途抛异常」，两者的处理策略不同。
+    //
+    // 这里不能 try/catch 包住下面的 composable 调用（Compose 编译器不支持），
+    // 所以只记次数；组合真出错时宿主会吞掉异常，看门狗看到「进过组合但没存活」
+    // 就按失败处理。
+    ShellState.replaceInvocations += 1
     RetainedHostContent(hidden = ShellState.onScreen) { AppNavigation() }
     // 存活标记放在最后：整个组合体走完才置位。
     // 中途抛异常则不置位，看门狗会关掉替换、让宿主自绘。
@@ -137,25 +146,37 @@ fun HostPassthrough() {
 
 // ── 插件自己的界面（append 钩子） ────────────────────────────────────────────
 
+/**
+ * 按宿主当前状态取色板（深浅 + 窗口材质 + 强制不透明）。
+ *
+ * **必须由每个「独立组合树」自己调用**：`CompositionLocalProvider(LocalPalette …)`
+ * 只覆盖调用它的子树。顶层侧栏（层级 A）挂在宿主的另一个 composition 里，
+ * 拿不到 [PluginOverlay] 提供的色板，会退回 [LocalPalette] 的默认值
+ * `darkSolid`（`material = false`）——表现就是材质明明开着、浮层却全是不透明色。
+ */
+@Composable
+internal fun rememberHostPalette(): Palette {
+    val dark = remember(ShellState.open) { guardHost("dark") { Host.detectDark() } ?: true }
+    val style = remember(ShellState.open) { guardHost("style") { Host.windowStyle } ?: "None" }
+    // forceOpaque 必须进 key：替换失败回退时它会被改写，不进 key 调色板不会重算
+    return remember(dark, style, Settings.forceOpaque) {
+        guardHost("palette") {
+            saltPalette(dark = dark, windowStyle = style, forceOpaque = Settings.forceOpaque)
+        } ?: saltPalette(dark = true, windowStyle = "None", forceOpaque = true)
+    }
+}
+
 @Composable
 fun PluginOverlay() {
     // 取宿主状态：任一步失败都不能让整块区域炸掉
-    val dark = remember(ShellState.open) { guardHost("dark") { Host.detectDark() } ?: true }
-    val style = remember(ShellState.open) { guardHost("style") { Host.windowStyle } ?: "None" }
+    val palette = rememberHostPalette()
     // 日志面板的显示状态。用 remember 而非 ShellState：它只是浮层里的一层遮罩
     var logOpen by remember { mutableStateOf(false) }
-    // forceOpaque 必须进 key：替换失败回退时它会被改写，不进 key 调色板不会重算
-    val palette =
-        remember(dark, style, Settings.forceOpaque) {
-            guardHost("palette") {
-                saltPalette(dark = dark, windowStyle = style, forceOpaque = Settings.forceOpaque)
-            } ?: saltPalette(dark = true, windowStyle = "None", forceOpaque = true)
-        }
     val onScreen = ShellState.onScreen
     Diag.logOnce(
         "shell-compose",
-        "PluginOverlay composed style=$style dark=$dark " +
-            "material=${palette.material} forceOpaque=${Settings.forceOpaque}",
+        "PluginOverlay composed material=${palette.material} dark=${palette.dark} " +
+            "forceOpaque=${Settings.forceOpaque}",
     )
 
     CompositionLocalProvider(
@@ -699,7 +720,7 @@ private fun ToolButton(
  * Compose 1.12 用 `IndicationNodeFactory`；这里返回一个无副作用的节点，
  * 即不绘制任何内容。
  */
-private data object NoIndication : androidx.compose.foundation.IndicationNodeFactory {
+internal data object NoIndication : androidx.compose.foundation.IndicationNodeFactory {
     /**
      * **每次都必须返回新节点**。
      *
@@ -733,7 +754,9 @@ internal fun FabButton(
 
     Card(
         modifier = modifier,
-        color = if (hovered) palette.cardRaised else palette.card,
+        // 材质下按钮取 85% 不透明度的浮层底色（见 Palette.fabCard），
+        // 无材质时仍是原来的不透明原色。
+        color = if (hovered) palette.fabCardRaised else palette.fabCard,
         radius = 22.dp,
         outline = palette.border,
     ) {

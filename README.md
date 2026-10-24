@@ -1,10 +1,18 @@
 # 音乐标签工作台
 
-![Kotlin](https://img.shields.io/badge/Kotlin-2.4.20-7F52FF?logo=kotlin&logoColor=white) ![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.12.1-4285F4?logo=jetpackcompose&logoColor=white) ![JDK](https://img.shields.io/badge/JDK-25-007396?logo=openjdk&logoColor=white) ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows11&logoColor=white) ![SPW](https://img.shields.io/badge/SPW-Plugin-E4574C)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.4.20-7F52FF?logo=kotlin&logoColor=white) ![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.12.1-4285F4?logo=jetpackcompose&logoColor=white) ![JDK](https://img.shields.io/badge/JDK-25-007396?logo=openjdk&logoColor=white) ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows11&logoColor=white) ![SPW](https://img.shields.io/badge/SPW-Plugin-E4574C) [![Steam 创意工坊](https://img.shields.io/badge/Steam%20创意工坊-订阅-1B2838?logo=steam&logoColor=white)](https://steamcommunity.com/sharedfiles/filedetails/?id=3825830018)
 
 适用于 Salt Player for Windows（SPW）的音乐标签插件。可以批量匹配封面与逐字歌词、为歌词逐字打轴、查看歌曲频谱图，并在写入文件前集中预览和编辑标签信息。
 
 > 非官方社区插件。在线数据来自相应音乐服务，接口可用性可能随服务调整而变化。
+
+## Steam 创意工坊
+
+<a href="https://steamcommunity.com/sharedfiles/filedetails/?id=3825830018">
+  <img src="https://img.shields.io/badge/Steam%20创意工坊-音乐标签工作台-1B2838?logo=steam&logoColor=white" alt="Steam 创意工坊：音乐标签工作台">
+</a>
+
+在 [Steam 创意工坊](https://steamcommunity.com/sharedfiles/filedetails/?id=3825830018) 订阅安装，后续更新随创意工坊自动下发；也可以从发布页下载 `.spmod` 手动导入。
 
 ## 主要功能
 

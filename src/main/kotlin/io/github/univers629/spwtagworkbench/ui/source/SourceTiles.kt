@@ -22,7 +22,7 @@ import io.github.univers629.spwtagworkbench.core.Salt
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.Txt
 
-/**
+/*
  * 多源候选网格里的两种占位卡，封面页与艺术家图页共用。
  *
  * 两页此前各有一份完全相同的实现，统一到这里避免双份维护。

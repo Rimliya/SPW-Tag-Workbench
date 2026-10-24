@@ -6,8 +6,6 @@ package io.github.univers629.spwtagworkbench.core
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -18,6 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
@@ -248,6 +248,56 @@ private fun overlayOf(solid: Palette): Palette =
 
 private val darkOverlay = overlayOf(darkSolid)
 private val lightOverlay = overlayOf(lightSolid)
+
+/**
+ * 全局侧栏悬浮按钮在材质下的不透明度。
+ *
+ * 取 75%，与侧栏面板（[SIDEBAR_MATERIAL_ALPHA]）一致：按钮与面板属于同一套浮层，
+ * 两者不透明度差太多会显得材质拼接不上。无材质时没有可透出的底，按钮保持不透明原色。
+ */
+private const val FAB_MATERIAL_ALPHA = 0.75f
+
+/**
+ * 悬浮按钮底色：材质下用浮层配方的 75% 不透明度，无材质下用不透明原色。
+ *
+ * 之所以不直接用 [Palette.card]：材质配方的卡面是「提亮覆盖色」，
+ * 叠在材质上的不透明度只有 16%–44%，深色下按钮会显得比旁边侧栏面板虚一截；
+ * 而浮层配方（[overlaySolid]）在深浅两套主题下都是校准过的实色底，
+ * 压到 75% 后能稳定透出材质，浅色不会因为底本身就接近白色而看起来「完全不透明」。
+ */
+val Palette.fabCard: Color
+    get() = if (material) overlaySolid.card.copy(alpha = FAB_MATERIAL_ALPHA) else card
+
+/** 悬浮按钮悬停态底色，规则同 [fabCard]。 */
+val Palette.fabCardRaised: Color
+    get() = if (material) overlaySolid.cardRaised.copy(alpha = FAB_MATERIAL_ALPHA) else cardRaised
+
+/**
+ * 全局侧栏面板在材质下的不透明度。
+ *
+ * 与悬浮按钮（[FAB_MATERIAL_ALPHA]）同为 75%：按钮与面板是同一套浮层，
+ * 视觉上要一起变。弹窗与下拉菜单仍保持 [OVERLAY_ALPHA]（90%）——
+ * 它们是模态层，需要压住背后的编辑界面。
+ */
+private const val SIDEBAR_MATERIAL_ALPHA = 0.75f
+
+/**
+ * 侧栏面板配色：材质下把浮层配方压到 75%，无材质时直接用浮层实色（本来就不透明）。
+ *
+ * 只压 `card` / `cardRaised` / `cardOverlay` 三个底色，文字与强调色不动 ——
+ * 它们本来就是不透明实色，带 alpha 会掉对比度。
+ */
+val Palette.sidebarSolid: Palette
+    get() =
+        if (!material) {
+            overlaySolid
+        } else {
+            overlaySolid.copy(
+                card = overlaySolid.card.copy(alpha = SIDEBAR_MATERIAL_ALPHA),
+                cardRaised = overlaySolid.cardRaised.copy(alpha = SIDEBAR_MATERIAL_ALPHA),
+                cardOverlay = overlaySolid.cardOverlay.copy(alpha = SIDEBAR_MATERIAL_ALPHA),
+            )
+        }
 
 val Palette.overlaySolid: Palette
     get() =

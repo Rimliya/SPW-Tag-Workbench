@@ -221,19 +221,73 @@ object CoverStore {
 
         val list =
             try {
-                val audio = AudioFileIO.read(file)
-                val tag = audio.tag ?: return emptyList()
-                tag.artworkList.orEmpty().mapNotNull { art ->
-                    val data = art.binaryData
-                    if (data == null || data.isEmpty()) {
-                        null
-                    } else {
+                if (ContainerKind.detect(file) == ContainerKind.DFF) {
+                    DffTags.read(file)?.pictures?.map { pic ->
                         EmbeddedPicture(
-                            type = runCatching { art.pictureType }.getOrDefault(0),
-                            description = art.description.orEmpty(),
-                            bytes = data,
-                            mime = art.mimeType ?: CoverMime.detect(data),
+                            type = pic.type,
+                            description = pic.description,
+                            bytes = pic.bytes,
+                            mime = pic.mime.ifBlank { CoverMime.detect(pic.bytes) },
                         )
+                    } ?: emptyList()
+                } else if (ContainerKind.detect(file) == ContainerKind.AAC) {
+                    Id3v2.read(file)?.pictures?.map { pic ->
+                        EmbeddedPicture(
+                            type = pic.type,
+                            description = pic.description,
+                            bytes = pic.bytes,
+                            mime = pic.mime.ifBlank { CoverMime.detect(pic.bytes) },
+                        )
+                    } ?: emptyList()
+                } else if (ContainerKind.detect(file) == ContainerKind.OPUS) {
+                    OggTags.pictures(file).map { pic ->
+                        EmbeddedPicture(
+                            type = pic.type,
+                            description = "",
+                            bytes = pic.bytes,
+                            mime = pic.mime.ifBlank { CoverMime.detect(pic.bytes) },
+                        )
+                    }
+                } else if (ContainerKind.detect(file) == ContainerKind.TTA && Id3v2.read(file) != null) {
+                    Id3v2.read(file)?.pictures?.map { pic ->
+                        EmbeddedPicture(
+                            type = pic.type,
+                            description = pic.description,
+                            bytes = pic.bytes,
+                            mime = pic.mime.ifBlank { CoverMime.detect(pic.bytes) },
+                        )
+                    } ?: emptyList()
+                } else if (ContainerKind.detect(file).isApeV2) {
+                    // APEv2 容器（APE / WV / TAK / TTA / MPC）：标签库不支持，直接用尾部标签
+                    val tag = ApeV2.read(file)
+                    val cover = tag?.item(ApeV2.Key.COVER_FRONT)?.value?.let { ApeV2.coverBytes(it) }
+                    if (cover == null || cover.isEmpty()) {
+                        emptyList()
+                    } else {
+                        listOf(
+                            EmbeddedPicture(
+                                type = PictureTypeStandard.FRONT_COVER,
+                                description = "",
+                                bytes = cover,
+                                mime = CoverMime.detect(cover),
+                            ),
+                        )
+                    }
+                } else {
+                    val audio = AudioFileIO.read(file)
+                    val tag = audio.tag ?: return emptyList()
+                    tag.artworkList.orEmpty().mapNotNull { art ->
+                        val data = art.binaryData
+                        if (data == null || data.isEmpty()) {
+                            null
+                        } else {
+                            EmbeddedPicture(
+                                type = runCatching { art.pictureType }.getOrDefault(0),
+                                description = art.description.orEmpty(),
+                                bytes = data,
+                                mime = art.mimeType ?: CoverMime.detect(data),
+                            )
+                        }
                     }
                 }
             } catch (t: Throwable) {
@@ -281,6 +335,27 @@ object TrackReader {
         if (!file.isFile) return null
 
         return try {
+            val kind = ContainerKind.detect(file)
+            if (kind == ContainerKind.TTA) {
+                // TTA 的主标签习惯是文件开头的 ID3v2，其次才是尾部的 APEv2
+                val tag = Id3v2.read(file)
+                if (tag != null) return trackFromId3(tag, path, withCover)
+            }
+            if (kind.isApeV2) {
+                val track = readApeV2(file, path, withCover)
+                if (track != null) return track
+            }
+            if (kind == ContainerKind.OPUS) {
+                val track = readOpus(file, path, withCover)
+                if (track != null) return track
+            }
+            if (kind == ContainerKind.AAC) {
+                return readAac(file, path, withCover)
+            }
+            if (kind == ContainerKind.DFF) {
+                val tag = DffTags.read(file)
+                if (tag != null) return trackFromId3(tag, path, withCover) ?: readAac(file, path, withCover)
+            }
             val audio = AudioFileIO.read(file)
             val tag = audio.tag
             val header = audio.audioHeader
@@ -288,43 +363,182 @@ object TrackReader {
             if (artwork != null && artwork.isNotEmpty()) {
                 CoverStore.put(path, artwork)
             }
-            io.github.univers629.spwtagworkbench.backend.model.Track(
-                id = "",
-                path = path,
-                title = read(tag, FieldKey.TITLE),
-                artist = read(tag, FieldKey.ARTIST),
-                album = read(tag, FieldKey.ALBUM),
-                albumArtist = read(tag, FieldKey.ALBUM_ARTIST),
-                genre = read(tag, FieldKey.GENRE),
-                year = read(tag, FieldKey.YEAR),
-                track = read(tag, FieldKey.TRACK),
-                disc = read(tag, FieldKey.DISC_NO),
-                lyrics = read(tag, FieldKey.LYRICS),
-                comment = read(tag, FieldKey.COMMENT),
-                durationMs =
-                    run {
-                        val seconds = header?.trackLength?.toLong() ?: 0L
-                        seconds * 1000L
-                    },
-                bitDepth = if ((header?.bitsPerSample ?: 0) > 0) "${header?.bitsPerSample} bit" else "",
-                bitrate = header?.bitRate?.let { "$it kbps" } ?: "",
-                readable = true,
-                hasCover =
-                    artwork != null ||
+            io.github.univers629.spwtagworkbench.backend.model
+                .Track(
+                    id = "",
+                    path = path,
+                    title = read(tag, FieldKey.TITLE),
+                    artist = read(tag, FieldKey.ARTIST),
+                    album = read(tag, FieldKey.ALBUM),
+                    albumArtist = read(tag, FieldKey.ALBUM_ARTIST),
+                    genre = read(tag, FieldKey.GENRE),
+                    year = read(tag, FieldKey.YEAR),
+                    track = read(tag, FieldKey.TRACK),
+                    disc = read(tag, FieldKey.DISC_NO),
+                    lyrics = read(tag, FieldKey.LYRICS),
+                    comment = read(tag, FieldKey.COMMENT),
+                    durationMs =
                         run {
-                            val any =
-                                try {
-                                    tag?.firstArtwork?.binaryData
-                                } catch (_: Throwable) {
-                                    null
-                                }
-                            any != null
+                            val seconds = header?.trackLength?.toLong() ?: 0L
+                            seconds * 1000L
                         },
-            )
+                    bitDepth = if ((header?.bitsPerSample ?: 0) > 0) "${header?.bitsPerSample} bit" else "",
+                    bitrate = header?.bitRate?.let { "$it kbps" } ?: "",
+                    readable = true,
+                    hasCover =
+                        artwork != null ||
+                            run {
+                                val any =
+                                    try {
+                                        tag?.firstArtwork?.binaryData
+                                    } catch (_: Throwable) {
+                                        null
+                                    }
+                                any != null
+                            },
+                ).let { track -> mergeRiffInfo(file, track) }
         } catch (t: Throwable) {
             Diag.log("read: 读文件失败 ${file.name} ${t.javaClass.simpleName}")
             null
         }
+    }
+
+    /**
+     * WAV / AIFF 常见「只有 RIFF INFO、没有 ID3」的文件：
+     * 用 INFO 里的字段补齐标签库读出来的空字段。
+     */
+    private fun mergeRiffInfo(
+        file: File,
+        track: io.github.univers629.spwtagworkbench.backend.model.Track,
+    ): io.github.univers629.spwtagworkbench.backend.model.Track {
+        val kind = ContainerKind.detect(file)
+        if (kind != ContainerKind.WAV && kind != ContainerKind.AIFF) return track
+        val info = RiffInfo.read(file)
+        if (info.isEmpty()) return track
+
+        fun pick(
+            current: String,
+            key: String,
+        ): String = current.ifBlank { info[key].orEmpty() }
+        return track.copy(
+            title = pick(track.title, "title"),
+            artist = pick(track.artist, "artist"),
+            album = pick(track.album, "album"),
+            genre = pick(track.genre, "genre"),
+            year = pick(track.year, "year"),
+            track = pick(track.track, "track"),
+            comment = pick(track.comment, "comment"),
+        )
+    }
+
+    /** 从 AAC 裸流的前置 ID3v2 构造 Track；没有标签时返回空字段的 Track。 */
+    private fun readAac(
+        file: File,
+        path: String,
+        withCover: Boolean,
+    ): io.github.univers629.spwtagworkbench.backend.model.Track =
+        trackFromId3(Id3v2.read(file), path, withCover)
+            ?: io.github.univers629.spwtagworkbench.backend.model.Track(
+                id = "",
+                path = path,
+                readable = true,
+            )
+
+    /** 用一份 ID3v2 标签构造 Track（AAC / DFF 共用）。 */
+    private fun trackFromId3(
+        tag: Id3v2.Tag?,
+        path: String,
+        withCover: Boolean,
+    ): io.github.univers629.spwtagworkbench.backend.model.Track? {
+        tag ?: return null
+        val cover = tag.pictures.firstOrNull()?.bytes
+        if (withCover && cover != null && cover.isNotEmpty()) CoverStore.put(path, cover)
+        val major = tag.major
+
+        fun field(id: String): String = tag.text(id).orEmpty()
+        return io.github.univers629.spwtagworkbench.backend.model.Track(
+            id = "",
+            path = path,
+            title = field("TIT2"),
+            artist = field("TPE1"),
+            album = field("TALB"),
+            albumArtist = field("TPE2"),
+            genre = field("TCON"),
+            year = field(Id3v2.yearFrameId(major)).ifEmpty { field("TYER") }.ifEmpty { field("TDRC") },
+            track = field("TRCK"),
+            disc = field("TPOS"),
+            lyrics = tag?.lyrics.orEmpty(),
+            comment = field("COMM"),
+            durationMs = 0L,
+            bitDepth = "",
+            bitrate = "",
+            readable = true,
+            hasCover = cover != null && cover.isNotEmpty(),
+        )
+    }
+
+    /** 从 OpusTags 注释构造 Track；读不到注释时返回 null。 */
+    private fun readOpus(
+        file: File,
+        path: String,
+        withCover: Boolean,
+    ): io.github.univers629.spwtagworkbench.backend.model.Track? {
+        val comment = OggTags.read(file) ?: return null
+        return io.github.univers629.spwtagworkbench.backend.model.Track(
+            id = "",
+            path = path,
+            title = comment.text("TITLE").orEmpty(),
+            artist = comment.text("ARTIST").orEmpty(),
+            album = comment.text("ALBUM").orEmpty(),
+            albumArtist = comment.text("ALBUMARTIST").orEmpty(),
+            genre = comment.text("GENRE").orEmpty(),
+            year = comment.text("DATE").orEmpty(),
+            track = comment.text("TRACKNUMBER").orEmpty(),
+            disc = comment.text("DISCNUMBER").orEmpty(),
+            lyrics = comment.text("LYRICS").orEmpty(),
+            comment = comment.text("COMMENT").orEmpty(),
+            durationMs = 0L,
+            bitDepth = "",
+            bitrate = "",
+            readable = true,
+            hasCover = comment.text("METADATA_BLOCK_PICTURE") != null,
+        )
+    }
+
+    /**
+     * 从 APEv2 标签构造 Track。容器不支持读取时返回 null，由调用方回到标签库流程。
+     *
+     * APEv2 容器没有统一的音频头解析入口，时长与码率留空。
+     */
+    private fun readApeV2(
+        file: File,
+        path: String,
+        withCover: Boolean,
+    ): io.github.univers629.spwtagworkbench.backend.model.Track? {
+        val tag = ApeV2.read(file) ?: return null
+        val cover = tag.item(ApeV2.Key.COVER_FRONT)?.value?.let { ApeV2.coverBytes(it) }
+        if (withCover && cover != null && cover.isNotEmpty()) {
+            CoverStore.put(path, cover)
+        }
+        return io.github.univers629.spwtagworkbench.backend.model.Track(
+            id = "",
+            path = path,
+            title = tag.text(ApeV2.Key.TITLE).orEmpty(),
+            artist = tag.text(ApeV2.Key.ARTIST).orEmpty(),
+            album = tag.text(ApeV2.Key.ALBUM).orEmpty(),
+            albumArtist = tag.text(ApeV2.Key.ALBUM_ARTIST).orEmpty(),
+            genre = tag.text(ApeV2.Key.GENRE).orEmpty(),
+            year = tag.text(ApeV2.Key.YEAR).orEmpty(),
+            track = tag.text(ApeV2.Key.TRACK).orEmpty(),
+            disc = tag.text(ApeV2.Key.DISC).orEmpty(),
+            lyrics = tag.text(ApeV2.Key.LYRICS).orEmpty(),
+            comment = tag.text(ApeV2.Key.COMMENT).orEmpty(),
+            durationMs = 0L,
+            bitDepth = "",
+            bitrate = "",
+            readable = true,
+            hasCover = cover != null && cover.isNotEmpty(),
+        )
     }
 
     /** 只读歌词文本。 */
@@ -333,6 +547,22 @@ object TrackReader {
         val file = File(path)
         if (!file.isFile) return null
         return try {
+            val kind = ContainerKind.detect(file)
+            if (kind == ContainerKind.TTA) {
+                Id3v2.read(file)?.lyrics?.let { return it }
+            }
+            if (kind.isApeV2) {
+                return ApeV2.read(file)?.text(ApeV2.Key.LYRICS)
+            }
+            if (kind == ContainerKind.OPUS) {
+                return OggTags.read(file)?.text("LYRICS")
+            }
+            if (kind == ContainerKind.AAC) {
+                return Id3v2.read(file)?.lyrics
+            }
+            if (kind == ContainerKind.DFF) {
+                return DffTags.read(file)?.lyrics
+            }
             val text = AudioFileIO.read(file).tag?.getFirst(FieldKey.LYRICS)
             text?.takeIf { it.isNotBlank() }
         } catch (t: Throwable) {
@@ -347,7 +577,12 @@ object TrackReader {
     ): String {
         if (tag == null) return ""
         return try {
-            tag.getFirst(key)?.trim().orEmpty()
+            // 个别容器（WAV 的 INFO 块）会在值末尾留 NUL，读出来要清掉
+            tag
+                .getFirst(key)
+                ?.replace("\u0000", "")
+                ?.trim()
+                .orEmpty()
         } catch (_: Throwable) {
             ""
         }

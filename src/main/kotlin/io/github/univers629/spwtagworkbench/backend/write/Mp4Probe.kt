@@ -193,13 +193,19 @@ object Mp4Probe {
         }
     }
 
-    private fun readU32(b: ByteArray, o: Int): Long =
+    private fun readU32(
+        b: ByteArray,
+        o: Int,
+    ): Long =
         ((b[o].toLong() and 0xFF) shl 24) or
             ((b[o + 1].toLong() and 0xFF) shl 16) or
             ((b[o + 2].toLong() and 0xFF) shl 8) or
             (b[o + 3].toLong() and 0xFF)
 
-    private fun readU64(b: ByteArray, o: Int): Long {
+    private fun readU64(
+        b: ByteArray,
+        o: Int,
+    ): Long {
         var v = 0L
         for (i in 0 until 8) v = (v shl 8) or (b[o + i].toLong() and 0xFF)
         return v

@@ -149,6 +149,20 @@ object ShellState {
     @Volatile
     var replaceAlive: Boolean = false
 
+    /**
+     * 替换体进入组合的次数。
+     *
+     * 用来区分两种失败：宿主**根本没调用**替换体（≥0 次就是 0），
+     * 还是调用了但组合中途抛异常（>0 而 [replaceAlive] 仍为 false）。
+     * 两种情况下看门狗的处理策略不同，日志也需要能看出来。
+     */
+    @Volatile
+    var replaceInvocations: Int = 0
+
+    /** 替换体组合时捕获到的第一个异常，供看门狗写进日志。 */
+    @Volatile
+    var replaceError: String? = null
+
     fun reset() {
         open = false
         progress = 0f
