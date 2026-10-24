@@ -3,6 +3,7 @@
 
 package io.github.univers629.spwtagworkbench.backend.lyrics
 
+import io.github.univers629.spwtagworkbench.backend.net.Json
 import io.github.univers629.spwtagworkbench.data.LyricCell
 import io.github.univers629.spwtagworkbench.data.LyricLine
 
@@ -112,6 +113,14 @@ object LyricsFormat {
 
     /** QRC 词级标记：`字(绝对起始ms,时长ms)`，**文本在括号之前**。 */
     private val QRC_WORD = Regex("""(.*?)\((\d+),(\d+)\)""")
+
+    /**
+     * 源站歌词的文本头标签：`[id:…]`、`[ti:…]`、`[al:…]`、`[language:…]` 这类。
+     *
+     * 与时间轴行的区别在方括号内：时间轴是纯数字（`[1031,4600]`、`[00:01.03]`），
+     * 头标签以字母或 `$` 开头。
+     */
+    private val HEADER_TAG = Regex("""^\[[A-Za-z_$][^]]*]""")
 
     /** SRT 时间轴：`00:00:12,340 --> 00:00:15,670`。 */
     private val SRT_CUE =
@@ -840,6 +849,189 @@ object LyricsFormat {
         val lines = parseWordSynced(text, QRC_WORD, format = Format.QRC)
         if (lines.isEmpty()) return ""
         return toSpl(lines)
+    }
+
+    /**
+     * 剥掉源站歌词里的文本头标签，只保留时间轴行。
+     *
+     * KRC 会带 `[id:] / [ti:] / [ar:] / [al:] / [by:] / [language:]` 六类头标签，
+     * 其中 `[language:]` 的值是数 KB 的 Base64(JSON)：原样留在文本里，界面就会
+     * 显示成一屏乱码。解析器本来就只认时间轴开头的行，剥掉不影响时间轴。
+     */
+    fun stripHeaderTags(text: String): String =
+        text
+            .lineSequence()
+            .filterNot { HEADER_TAG.containsMatchIn(it.trimStart()) }
+            .joinToString("\n")
+            .trim()
+
+    /**
+     * 把 KRC 转成结构化歌词（SPL 写法），并把 `[language:]` 里的译文与罗马音并入。
+     *
+     * 与 [qrcToStructured] 同一条思路：源站返回的机器格式先转成可编辑文本再交给界面。
+     * KRC 比 QRC 多一条 `[language:]` 轨道，解出来是：
+     * `{"content":[{"lyricContent":[[…]],"type":0},{"lyricContent":[[…]],"type":1}],"version":1}`，
+     * `type = 1` 是逐行翻译、`type = 0` 是逐字罗马音。
+     *
+     * 项目里多语言轨道的约定是「同一时间戳的第 1/2/3 条依次为原文/译文/罗马音」
+     * （见 `Repo.filterLyricTracks`），因此输出按 原文 → 译文 → 罗马音 的顺序排列，
+     * 三个开关对酷狗歌词同样生效。
+     *
+     * @return 转换后的文本；输入不是 KRC 或解析不出行时返回空串
+     */
+    fun krcToStructured(raw: String): String {
+        if (raw.isBlank()) return ""
+        val body = stripHeaderTags(raw)
+        if (!body.lineSequence().any { WORD_LINE_STAMP.containsMatchIn(it.trimStart()) }) return ""
+        val lines = parseWordSynced(body, KRC_WORD, format = Format.KRC)
+        if (lines.isEmpty()) return ""
+        val tracks = krcLanguageTracks(raw)
+        val sb = StringBuilder()
+        for ((index, line) in lines.withIndex()) {
+            val stamp = lrcStamp(line.startMs.coerceAtLeast(0L))
+            if (line.cells.isEmpty()) {
+                sb.append(stamp).append(line.text)
+            } else {
+                for (cell in line.cells) {
+                    sb.append(lrcStamp(cell.startMs.coerceAtLeast(0L))).append(cell.text)
+                }
+            }
+            sb.append('\n')
+            tracks.translation.getOrNull(index)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                sb.append(stamp).append(it).append('\n')
+            }
+            tracks.romanization.getOrNull(index)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                sb.append(stamp).append(it).append('\n')
+            }
+        }
+        return sb.toString().trimEnd()
+    }
+
+    /** `[language:]` 解出的两条轨道，缺失时为空列表。 */
+    private data class LanguageTracks(
+        val translation: List<String> = emptyList(),
+        val romanization: List<String> = emptyList(),
+    )
+
+    /**
+     * 解析 KRC 的 `[language:<Base64>]` 头标签。
+     *
+     * Base64 解出 JSON：`content` 每项带 `type` 与 `lyricContent`，`lyricContent`
+     * 按行给出逐字片段数组，拼接后是整行文本。Base64 可能省略 `=` 补位，先补齐。
+     * 任何一步失败都返回空轨道，原文不受影响。
+     */
+    private fun krcLanguageTracks(raw: String): LanguageTracks {
+        val tag =
+            raw.lineSequence()
+                .map { it.trimStart() }
+                .firstOrNull { it.startsWith("[language:") }
+                ?: return LanguageTracks()
+        val payload = tag.removePrefix("[language:").substringBeforeLast(']', "")
+        if (payload.isEmpty()) return LanguageTracks()
+        val json =
+            runCatching {
+                val padded = payload + "=".repeat((4 - payload.length % 4) % 4)
+                val decoded = String(java.util.Base64.getDecoder().decode(padded), Charsets.UTF_8)
+                Json.parse(decoded)
+            }.getOrNull() ?: return LanguageTracks()
+        var translation: List<String> = emptyList()
+        var romanization: List<String> = emptyList()
+        for (track in json.arr("content")) {
+            val lines =
+                track.arr("lyricContent").map { row ->
+                    row.let { it as? Json.Arr }?.items.orEmpty()
+                        .mapNotNull { (it as? Json.Str)?.value }
+                        .joinToString("")
+                }
+            when (track.num("type")?.toInt()) {
+                1 -> translation = lines
+                0 -> romanization = lines
+            }
+        }
+        return LanguageTracks(translation, romanization)
+    }
+
+    /**
+     * 把 YRC 转成结构化歌词（SPL），并把译文与罗马音并入同时间戳轨道。
+     *
+     * YRC 行格式是 `[行起始ms,行时长](字绝对起始ms,字时长,0)字`，词级时间用绝对毫秒，
+     * 与 KRC 的相对偏移不同。译文与罗马音来自歌词接口的 `tlyric` / `romalrc`（普通 LRC），
+     * 与逐字行按起始时间对齐，容差见 [TRACK_TOLERANCE_MS]。
+     *
+     * @return 转换后的文本；输入不是 YRC 或解析不出行时返回空串
+     */
+    fun yrcToStructured(
+        raw: String,
+        translation: String? = null,
+        romanization: String? = null,
+    ): String {
+        if (raw.isBlank()) return ""
+        val lines = parseWordSynced(stripHeaderTags(raw), YRC_WORD, format = Format.YRC)
+        if (lines.isEmpty()) return ""
+        val trans = trackIndex(translation)
+        val roma = trackIndex(romanization)
+        val sb = StringBuilder()
+        for (line in lines) {
+            val stamp = lrcStamp(line.startMs.coerceAtLeast(0L))
+            if (line.cells.isEmpty()) {
+                sb.append(stamp).append(line.text)
+            } else {
+                for (cell in line.cells) {
+                    sb.append(lrcStamp(cell.startMs.coerceAtLeast(0L))).append(cell.text)
+                }
+            }
+            sb.append('\n')
+            trackAt(trans, line.startMs)?.let { sb.append(stamp).append(it).append('\n') }
+            trackAt(roma, line.startMs)?.let { sb.append(stamp).append(it).append('\n') }
+        }
+        return sb.toString().trimEnd()
+    }
+
+    /**
+     * 把普通 LRC 与译文 / 罗马音合并成同一时间戳的多行文本。
+     *
+     * 没有可合并的轨道时原样返回（保留重复时间戳等原始写法），避免无谓改写。
+     */
+    fun mergeLrcTracks(
+        lrc: String,
+        translation: String? = null,
+        romanization: String? = null,
+    ): String {
+        val body = stripHeaderTags(lrc)
+        if (body.isBlank()) return ""
+        val trans = trackIndex(translation)
+        val roma = trackIndex(romanization)
+        if (trans.isEmpty() && roma.isEmpty()) return body
+        val sb = StringBuilder()
+        for (line in parse(body)) {
+            val stamp = lrcStamp(line.startMs.coerceAtLeast(0L))
+            sb.append(stamp).append(line.text).append('\n')
+            if (line.startMs < 0L) continue
+            trackAt(trans, line.startMs)?.let { sb.append(stamp).append(it).append('\n') }
+            trackAt(roma, line.startMs)?.let { sb.append(stamp).append(it).append('\n') }
+        }
+        return sb.toString().trimEnd()
+    }
+
+    /** 译文 / 罗马音与逐字行的对齐容差：两边时间戳来源不同，允许几十毫秒偏差。 */
+    private const val TRACK_TOLERANCE_MS = 60L
+
+    /** 把译文 / 罗马音的 LRC 文本按行起始时间索引。 */
+    private fun trackIndex(track: String?): List<Pair<Long, String>> =
+        if (track.isNullOrBlank()) {
+            emptyList()
+        } else {
+            parse(track)
+                .filter { it.startMs >= 0L && it.text.isNotBlank() }
+                .map { it.startMs to it.text.trim() }
+        }
+
+    /** 取与逐字行时间最接近的一条轨道文本，超出容差返回 null。 */
+    private fun trackAt(track: List<Pair<Long, String>>, startMs: Long): String? {
+        if (track.isEmpty()) return null
+        val hit = track.minByOrNull { kotlin.math.abs(it.first - startMs) } ?: return null
+        if (kotlin.math.abs(hit.first - startMs) > TRACK_TOLERANCE_MS) return null
+        return hit.second.takeIf { it.isNotEmpty() }
     }
 
     /** `[mm:ss.xx]` 行级时间戳。 */

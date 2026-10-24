@@ -213,8 +213,19 @@ class KugouSource : MusicSource {
         // 解密链在本文件的 decodeKrc 里。
         val krcText = downloadLyric(id, accesskey, "krc")?.let { decodeKrc(it) }
         if (!krcText.isNullOrBlank() && LyricsFormat.detect(krcText) == LyricsFormat.Format.KRC) {
-            Diag.log("kugou: 取到逐字 krc ${krcText.length} 字")
-            return krcText
+            // **必须转成结构化歌词再返回**，与 QQ 的 qrcToStructured 同一处理：
+            // KRC 带 `[id:]/[ti:]/[language:]` 等文本头标签，其中 `[language:]`
+            // 是数 KB 的 Base64(JSON)，原样交给界面会显示成一大段乱码；
+            // 转换时顺带把里面的译文与罗马音并进同时间戳轨道。
+            val structured =
+                runCatching { LyricsFormat.krcToStructured(krcText) }
+                    .getOrElse { "" }
+            if (structured.isNotBlank()) {
+                Diag.log("kugou: krc ${krcText.length} 字 -> 结构化 ${structured.length} 字")
+                return structured
+            }
+            Diag.log("kugou: krc 转结构化失败，退回已剥头标签的原文")
+            return LyricsFormat.stripHeaderTags(krcText)
         }
         val lrcText = downloadLyric(id, accesskey, "lrc")?.let { it }
         Diag.log("kugou: 回退逐行 lrc ${lrcText?.length ?: 0} 字")

@@ -3,6 +3,7 @@
 
 package io.github.univers629.spwtagworkbench.backend.source
 
+import io.github.univers629.spwtagworkbench.backend.lyrics.LyricsFormat
 import io.github.univers629.spwtagworkbench.backend.net.Http
 import io.github.univers629.spwtagworkbench.backend.net.Json
 import io.github.univers629.spwtagworkbench.core.Diag
@@ -156,7 +157,19 @@ class NeteaseSource : MusicSource {
         val response =
             Http.get(
                 url = "https://music.163.com/api/song/lyric",
-                query = mapOf("id" to candidate.remoteId, "lv" to "-1", "kv" to "-1", "tv" to "-1"),
+                // **`yv=-1` 是逐字（yrc）的开关**：只传 lv/kv/tv 时响应里根本没有 yrc 字段，
+                // 于是永远回落到逐行 LRC。`rv`/`yrv` 用于带出 romalrc（罗马音）。
+                query =
+                    mapOf(
+                        "id" to candidate.remoteId,
+                        "lv" to "-1",
+                        "kv" to "-1",
+                        "tv" to "-1",
+                        "rv" to "-1",
+                        "yv" to "-1",
+                        "ytv" to "-1",
+                        "yrv" to "-1",
+                    ),
                 headers = headers,
                 timeoutMs = 7000,
             )
@@ -171,19 +184,32 @@ class NeteaseSource : MusicSource {
                 Diag.log("netease: 歌词响应解析失败 ${t.javaClass.simpleName}")
                 return null
             }
-        // 优先逐字（yrc），其次逐字旧版（klyric），最后普通 LRC。
-        // 网易云在 lv=-1 时会把三种一起返回，取最富信息的那份。
+        // 一次请求会带回多份：yrc 逐字、klyric 逐字旧版、lrc 逐行、tlyric 译文、romalrc 罗马音。
         val yrc = parsed.obj("yrc")?.str("lyric")?.takeIf { it.isNotBlank() }
         val klyric = parsed.obj("klyric")?.str("lyric")?.takeIf { it.isNotBlank() }
         val lrc = parsed.obj("lrc")?.str("lyric")?.takeIf { it.isNotBlank() }
+        val tlyric = parsed.obj("tlyric")?.str("lyric")?.takeIf { it.isNotBlank() }
+        val romalrc = parsed.obj("romalrc")?.str("lyric")?.takeIf { it.isNotBlank() }
+        Diag.log(
+            "netease: 歌词字段 yrc=${yrc?.length ?: 0} klyric=${klyric?.length ?: 0} " +
+                "lrc=${lrc?.length ?: 0} tlyric=${tlyric?.length ?: 0} romalrc=${romalrc?.length ?: 0}",
+        )
         if (yrc != null) {
-            Diag.log("netease: 取到逐字 yrc ${yrc.length} 字")
-            return yrc
+            // 与酷狗 KRC 同一处理：机器格式先转成结构化歌词，再顺带并入译文与罗马音
+            val structured =
+                runCatching { LyricsFormat.yrcToStructured(yrc, tlyric, romalrc) }
+                    .getOrElse { "" }
+            if (structured.isNotBlank()) {
+                Diag.log("netease: yrc ${yrc.length} 字 -> 结构化 ${structured.length} 字")
+                return structured
+            }
+            Diag.log("netease: yrc 转结构化失败，退回已剥头标签的原文")
+            return LyricsFormat.stripHeaderTags(yrc)
         }
         if (klyric != null) {
             Diag.log("netease: 取到逐字 klyric ${klyric.length} 字")
-            return klyric
+            return LyricsFormat.stripHeaderTags(klyric)
         }
-        return lrc
+        return lrc?.let { LyricsFormat.mergeLrcTracks(it, tlyric, romalrc) }
     }
 }
