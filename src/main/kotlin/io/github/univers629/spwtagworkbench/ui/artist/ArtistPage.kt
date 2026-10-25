@@ -35,6 +35,7 @@ import io.github.univers629.spwtagworkbench.core.Salt
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.core.sourceDoneFraction
 import io.github.univers629.spwtagworkbench.data.CoverCandidate
 import io.github.univers629.spwtagworkbench.data.CoverTile
@@ -69,11 +70,11 @@ fun ArtistPage(interactive: Boolean) {
     val chosen = Repo.artistCandidate
     // 当前编辑的槽位：两个槽位都写 type=8，互不影响
     val slotIndex = Repo.artistSlotIndex
-    val slotLabel = "槽 ${slotIndex + 1}"
+    val slotLabel = L10n.t("artist.slot", slotIndex + 1)
 
     DetailScaffold(
         page = SpacePage.Artist,
-        label = "艺术家图",
+        label = L10n.t("artist.title"),
         interactive = interactive,
         coverSize = 92.dp,
         // 与其它三页统一：进度走顶栏中间的进度条，源标签统计不再显示
@@ -82,7 +83,7 @@ fun ArtistPage(interactive: Boolean) {
             // 槽位切换：两个槽位都写 type=8，只改所选槽位的图
             repeat(Repo.artistSlotCount) { index ->
                 TapChip(
-                    label = "槽 ${index + 1}",
+                    label = L10n.t("artist.slot", index + 1),
                     onClick = { Repo.selectArtistSlot(index) },
                     accent = if (slotIndex == index) palette.accent else palette.textTertiary,
                     enabled = interactive,
@@ -91,7 +92,7 @@ fun ArtistPage(interactive: Boolean) {
             }
             // 导入 / 导出已移到左侧本地图下方；顶栏只留「写入草稿」
             TapChip(
-                label = "写入草稿",
+                label = L10n.t("action.writeDraft"),
                 onClick = { Repo.applyArtistCover() },
                 enabled = interactive && chosen != null && Repo.focused().hasFile,
             )
@@ -109,7 +110,7 @@ fun ArtistPage(interactive: Boolean) {
                             .padding(horizontal = 18.dp, vertical = 14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Txt("艺术家图预览（$slotLabel）", size = T.micro, color = palette.textTertiary, maxLines = 1)
+                    Txt(L10n.t("artist.preview", slotLabel), size = T.micro, color = palette.textTertiary, maxLines = 1)
                     Spacer(Modifier.height(8.dp))
                     Box(
                         modifier =
@@ -125,7 +126,7 @@ fun ArtistPage(interactive: Boolean) {
                         if (local != null) {
                             Image(
                                 bitmap = local,
-                                contentDescription = "本地艺术家图",
+                                contentDescription = L10n.t("artist.local"),
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                             )
@@ -139,7 +140,7 @@ fun ArtistPage(interactive: Boolean) {
                     }
                     Spacer(Modifier.height(8.dp))
                     Txt(
-                        text = Repo.artistPreviewInfo.ifBlank { "无艺术家封面" },
+                        text = Repo.artistPreviewInfo.ifBlank { L10n.t("artist.none") },
                         size = T.caption,
                         color = palette.textSecondary,
                         maxLines = 2,
@@ -149,15 +150,15 @@ fun ArtistPage(interactive: Boolean) {
                     // 这两个动作作用于本地文件，理应贴着本地图而不是待在顶栏。
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         TapChip(
-                            label = "导入",
+                            label = L10n.t("action.import"),
                             onClick = {
-                                pickImageFile("选择艺术家图片") { Repo.importImage(it, artistMode = true) }
+                                pickImageFile(L10n.t("artist.pickImage")) { Repo.importImage(it, artistMode = true) }
                             },
                             enabled = interactive,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         TapChip(
-                            label = "导出",
+                            label = L10n.t("action.export"),
                             onClick = {
                                 saveImageFile(suggestedName("artist", chosen)) { path ->
                                     Repo.exportCover(path, artistMode = true)
@@ -181,11 +182,11 @@ fun ArtistPage(interactive: Boolean) {
                             .padding(horizontal = 18.dp, vertical = 14.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Txt("候选艺术家图", size = T.heading, color = palette.text, maxLines = 1)
+                        Txt(L10n.t("artist.candidates"), size = T.heading, color = palette.text, maxLines = 1)
                         Spacer(Modifier.weight(1f))
                         if (chosen != null) {
                             Txt(
-                                text = "已勾选：${chosen.origin}",
+                                text = L10n.t("common.checked", chosen.origin),
                                 size = T.caption,
                                 color = palette.accent,
                                 maxLines = 1,
@@ -198,8 +199,8 @@ fun ArtistPage(interactive: Boolean) {
                     if (slots.isEmpty()) {
                         EmptyState(
                             glyph = "☺",
-                            title = if (Repo.artistLoading) "正在检索艺术家图…" else "还没有结果",
-                            hint = "换一首曲目会重新检索",
+                            title = if (Repo.artistLoading) L10n.t("artist.searching") else L10n.t("artist.noResults"),
+                            hint = L10n.t("common.researchOnTrackChange"),
                             modifier = Modifier.fillMaxWidth().height(180.dp),
                         )
                     } else {

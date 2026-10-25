@@ -56,6 +56,7 @@ import io.github.univers629.spwtagworkbench.core.Settings
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.data.CoverSlot
 import io.github.univers629.spwtagworkbench.data.Drafts
 import io.github.univers629.spwtagworkbench.data.Repo
@@ -193,7 +194,7 @@ private fun CoverPane(
                     if (image != null) {
                         Image(
                             bitmap = image,
-                            contentDescription = "封面",
+                            contentDescription = L10n.t("workbench.cover"),
                             contentScale = ContentScale.Fit,
                             modifier =
                                 Modifier
@@ -290,7 +291,7 @@ private fun ArtistSlot(
         }
         Spacer(Modifier.height(4.dp))
         Txt(
-            text = slot?.label ?: "点此匹配艺术家图",
+            text = slot?.label ?: L10n.t("workbench.matchArtistHint"),
             size = T.micro,
             color = if (slot != null) pal.textSecondary else pal.textTertiary,
             maxLines = 1,
@@ -312,7 +313,7 @@ private fun ArtistSlot(
  * 点「写入草稿」换成候选图时同步更新 —— 勾选候选不影响它。
  */
 @Composable
-private fun primaryInfo(): String = if (Repo.cover != null) Repo.localCoverInfo else "无封面"
+private fun primaryInfo(): String = if (Repo.cover != null) Repo.localCoverInfo else L10n.t("workbench.noCover")
 
 /**
  * 歌词编辑框：主界面右栏，占满高度，可直接编辑，改动只进草稿。
@@ -358,17 +359,17 @@ private fun LyricsEditorCard(
                     .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Txt("歌词编辑", size = T.heading, color = pal.text, maxLines = 1)
+                Txt(L10n.t("workbench.lyricsEditor"), size = T.heading, color = pal.text, maxLines = 1)
                 Spacer(Modifier.width(10.dp))
                 // 状态点：按「当前编辑内容 vs 原文」判断，只做提示，不控制任何入口
                 TapChip(
-                    label = if (changed) "待保存" else "已同步",
+                    label = if (changed) L10n.t("library.pendingSave") else L10n.t("workbench.synced"),
                     onClick = { },
                     accent = if (changed) pal.warn else pal.textTertiary,
                 )
                 Spacer(Modifier.weight(1f))
                 TapChip(
-                    label = "在线歌词",
+                    label = L10n.t("workbench.onlineLyrics"),
                     onClick = { SpaceRouter.navigate(SpacePage.Lyrics) },
                     enabled = meta.isPresent,
                 )
@@ -415,7 +416,7 @@ private fun LyricsEditorCard(
                             Box {
                                 if (text.isEmpty()) {
                                     Txt(
-                                        text = "每行一句；改完点顶栏「保存」写入标签",
+                                        text = L10n.t("workbench.lyricsPlaceholder"),
                                         size = T.body,
                                         color = pal.textTertiary,
                                         maxLines = 1,
@@ -449,11 +450,11 @@ private fun MetadataCard(
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Txt("元数据", size = T.heading, color = pal.text, maxLines = 1)
+                Txt(L10n.t("workbench.metadata"), size = T.heading, color = pal.text, maxLines = 1)
                 if (dirtyCount > 0) {
                     Spacer(Modifier.width(10.dp))
                     TapChip(
-                        label = "$dirtyCount 项待保存",
+                        label = L10n.t("workbench.dirtyCount", dirtyCount),
                         onClick = { Repo.discardCurrentDraft() },
                         accent = pal.warn,
                     )
@@ -462,7 +463,7 @@ private fun MetadataCard(
                 // 回放增益在频谱页测量：那边与频谱共用同一次 BASS 解码结果，
                 // 所以入口指向频谱页，而不是在元数据区重复跑一遍扫描。
                 TapChip(
-                    label = "计算回放增益",
+                    label = L10n.t("workbench.computeReplayGain"),
                     onClick = { SpaceRouter.navigate(SpacePage.Spectrum) },
                     enabled = original.hasFile,
                 )
@@ -470,25 +471,31 @@ private fun MetadataCard(
             Spacer(Modifier.height(12.dp))
             // 顺序与标签沿用 legacy 版元数据区：标题 / 艺术家 / 专辑 / 年份 /
             // 音轨号 / 风格 / 专辑艺术家 / 作曲家 / 作词家 / 注释。
-            MetaRow("标题", meta.title, Tags.Key.Title, original.hasFile, isDirty(TagField.Title))
-            MetaRow("艺术家", meta.artist, Tags.Key.Artist, original.hasFile, isDirty(TagField.Artist))
-            MetaRow("专辑", meta.album, Tags.Key.Album, original.hasFile, isDirty(TagField.Album))
-            MetaRow("年份", meta.year, Tags.Key.Year, original.hasFile, isDirty(TagField.Year))
+            MetaRow(L10n.tagLabel(TagField.Title), meta.title, Tags.Key.Title, original.hasFile, isDirty(TagField.Title))
+            MetaRow(L10n.tagLabel(TagField.Artist), meta.artist, Tags.Key.Artist, original.hasFile, isDirty(TagField.Artist))
+            MetaRow(L10n.tagLabel(TagField.Album), meta.album, Tags.Key.Album, original.hasFile, isDirty(TagField.Album))
+            MetaRow(L10n.tagLabel(TagField.Year), meta.year, Tags.Key.Year, original.hasFile, isDirty(TagField.Year))
             // 音轨号与碟号共用一行（legacy 的排法）：两个都是短数字，各占一整行太浪费
             MetaPairRow(
-                first = Triple("音轨号", meta.track, Tags.Key.Track),
-                second = Triple("碟号", meta.disc, Tags.Key.Disc),
+                first = Triple(L10n.tagLabel(TagField.Track), meta.track, Tags.Key.Track),
+                second = Triple(L10n.tagLabel(TagField.Disc), meta.disc, Tags.Key.Disc),
                 editable = original.hasFile,
                 firstChanged = isDirty(TagField.Track),
                 secondChanged = isDirty(TagField.Disc),
             )
-            MetaRow("风格", meta.genre, Tags.Key.Genre, original.hasFile, isDirty(TagField.Genre))
-            MetaRow("专辑艺术家", meta.albumArtist, Tags.Key.AlbumArtist, original.hasFile, isDirty(TagField.AlbumArtist))
-            MetaRow("作曲家", meta.composer, Tags.Key.Composer, original.hasFile, isDirty(TagField.Composer))
-            MetaRow("作词家", meta.lyricist, Tags.Key.Lyricist, original.hasFile, isDirty(TagField.Lyricist))
+            MetaRow(L10n.tagLabel(TagField.Genre), meta.genre, Tags.Key.Genre, original.hasFile, isDirty(TagField.Genre))
+            MetaRow(
+                L10n.tagLabel(TagField.AlbumArtist),
+                meta.albumArtist,
+                Tags.Key.AlbumArtist,
+                original.hasFile,
+                isDirty(TagField.AlbumArtist),
+            )
+            MetaRow(L10n.tagLabel(TagField.Composer), meta.composer, Tags.Key.Composer, original.hasFile, isDirty(TagField.Composer))
+            MetaRow(L10n.tagLabel(TagField.Lyricist), meta.lyricist, Tags.Key.Lyricist, original.hasFile, isDirty(TagField.Lyricist))
             // 注释可能很长，用多行框（legacy 同样给它 TextArea）
             MetaRow(
-                label = "注释",
+                label = L10n.tagLabel(TagField.Comment),
                 value = meta.comment,
                 key = Tags.Key.Comment,
                 editable = original.hasFile,
@@ -498,15 +505,15 @@ private fun MetadataCard(
             // 回放增益同样是标签字段（REPLAYGAIN_*），与频谱页测量、写入的是同一组键。
             // 四个值两行：音轨一对、专辑一对；数值格式由规范固定（`-9.38 dB` / `0.999900`）。
             MetaPairRow(
-                first = Triple("音轨增益", meta.replayGainTrackGain, Tags.Key.TrackGain),
-                second = Triple("音轨峰值", meta.replayGainTrackPeak, Tags.Key.TrackPeak),
+                first = Triple(L10n.tagLabel(TagField.ReplayGainTrackGain), meta.replayGainTrackGain, Tags.Key.TrackGain),
+                second = Triple(L10n.tagLabel(TagField.ReplayGainTrackPeak), meta.replayGainTrackPeak, Tags.Key.TrackPeak),
                 editable = original.hasFile,
                 firstChanged = isDirty(TagField.ReplayGainTrackGain),
                 secondChanged = isDirty(TagField.ReplayGainTrackPeak),
             )
             MetaPairRow(
-                first = Triple("专辑增益", meta.replayGainAlbumGain, Tags.Key.AlbumGain),
-                second = Triple("专辑峰值", meta.replayGainAlbumPeak, Tags.Key.AlbumPeak),
+                first = Triple(L10n.tagLabel(TagField.ReplayGainAlbumGain), meta.replayGainAlbumGain, Tags.Key.AlbumGain),
+                second = Triple(L10n.tagLabel(TagField.ReplayGainAlbumPeak), meta.replayGainAlbumPeak, Tags.Key.AlbumPeak),
                 editable = original.hasFile,
                 firstChanged = isDirty(TagField.ReplayGainAlbumGain),
                 secondChanged = isDirty(TagField.ReplayGainAlbumPeak),
@@ -531,7 +538,7 @@ private fun BatchRow(meta: TrackMeta) {
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Txt(
-                text = "批量",
+                text = L10n.t("workbench.batch"),
                 size = T.caption,
                 color = pal.textTertiary,
                 modifier = Modifier.width(86.dp),
@@ -539,21 +546,29 @@ private fun BatchRow(meta: TrackMeta) {
             )
             if (progress.done < progress.total || progress.total == 0) {
                 TapChip(
-                    label = "套用到同专辑",
+                    label = L10n.t("workbench.applyToAlbum"),
                     // 只请求，弹窗由 WorkbenchPage 根级统一渲染（才能整窗居中）
                     onClick = { Repo.requestAlbumBatch() },
                     enabled = meta.hasFile,
                 )
             } else {
                 TapChip(
-                    label = if (progress.finished) "已完成 ${progress.done}/${progress.total}" else "写入中…",
+                    label = if (progress.finished) {
+                        L10n.t(
+                            "workbench.writingProgress",
+                            progress.done,
+                            progress.total,
+                        )
+                    } else {
+                        L10n.t("workbench.writing")
+                    },
                     onClick = { },
                     accent = if (progress.failed > 0) pal.warn else pal.ok,
                 )
             }
             Spacer(Modifier.width(8.dp))
             if (progress.total > 0 && !progress.finished) {
-                TapChip(label = "取消", onClick = { Repo.cancelBatch() }, accent = pal.warn)
+                TapChip(label = L10n.t("workbench.cancel"), onClick = { Repo.cancelBatch() }, accent = pal.warn)
             }
             Spacer(Modifier.weight(1f))
             if (report != null) {
@@ -634,7 +649,7 @@ private fun MetaRow(
             value = value,
             onCommit = { Repo.stageField(key, it) },
             modifier = Modifier.weight(1f),
-            placeholder = "未填写",
+            placeholder = L10n.t("field.placeholder"),
             singleLine = lines <= 1,
             readOnly = !editable,
             size = T.label,
@@ -669,7 +684,7 @@ private fun MetaPairRow(
             value = first.second,
             onCommit = { Repo.stageField(first.third, it) },
             modifier = Modifier.weight(1f),
-            placeholder = "未填写",
+            placeholder = L10n.t("field.placeholder"),
             readOnly = !editable,
             size = T.label,
         )
@@ -684,7 +699,7 @@ private fun MetaPairRow(
             value = second.second,
             onCommit = { Repo.stageField(second.third, it) },
             modifier = Modifier.weight(1f),
-            placeholder = "未填写",
+            placeholder = L10n.t("field.placeholder"),
             readOnly = !editable,
             size = T.label,
         )
@@ -789,10 +804,10 @@ private fun CandidateRow(ranked: RankedCandidate) {
     val pal = Salt
     val levelLabel =
         when (ranked.level) {
-            1 -> "精确"
-            2 -> "核心"
-            3 -> "相似"
-            else -> "弱"
+            1 -> L10n.t("workbench.rateExact")
+            2 -> L10n.t("workbench.rateCore")
+            3 -> L10n.t("workbench.rateSimilar")
+            else -> L10n.t("workbench.rateWeak")
         }
     val levelColor =
         when (ranked.level) {
@@ -829,7 +844,7 @@ private fun CandidateRow(ranked: RankedCandidate) {
             Txt(
                 text =
                     buildString {
-                        append(ranked.candidate.artist.ifBlank { "未知艺术家" })
+                        append(ranked.candidate.artist.ifBlank { L10n.t("sidebar.unknownArtist") })
                         if (ranked.candidate.album.isNotBlank()) append(" · ").append(ranked.candidate.album)
                     },
                 size = T.micro,
@@ -843,14 +858,14 @@ private fun CandidateRow(ranked: RankedCandidate) {
             color = pal.textTertiary,
         )
         Spacer(Modifier.width(8.dp))
-        TapChip(label = "用元数据", onClick = { Repo.applyCandidate(ranked) })
+        TapChip(label = L10n.t("workbench.useMetadata"), onClick = { Repo.applyCandidate(ranked) })
         if (ranked.candidate.hasLyrics || ranked.allSources.any { it.contains("lrclib") }) {
             Spacer(Modifier.width(4.dp))
-            TapChip(label = "取歌词", onClick = { Repo.loadOnlineLyrics(ranked) })
+            TapChip(label = L10n.t("workbench.takeLyrics"), onClick = { Repo.loadOnlineLyrics(ranked) })
         }
         if (ranked.candidate.hasCover) {
             Spacer(Modifier.width(4.dp))
-            TapChip(label = "取封面", onClick = { Repo.loadNetworkCovers() })
+            TapChip(label = L10n.t("workbench.takeCover"), onClick = { Repo.loadNetworkCovers() })
         }
     }
 }

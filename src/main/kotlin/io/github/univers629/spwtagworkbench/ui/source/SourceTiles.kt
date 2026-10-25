@@ -21,6 +21,7 @@ import io.github.univers629.spwtagworkbench.core.Glyph
 import io.github.univers629.spwtagworkbench.core.Salt
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.Txt
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 
 /*
  * 多源候选网格里的两种占位卡，封面页与艺术家图页共用。
@@ -71,7 +72,7 @@ internal fun SourceEmptyTile(
                     .border(0.5.dp, palette.border.copy(alpha = 0.5f), RoundedCornerShape(10.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Txt("无更多匹配", size = T.caption, color = palette.textTertiary, maxLines = 1)
+            Txt(L10n.t("tiles.noMoreMatches"), size = T.caption, color = palette.textTertiary, maxLines = 1)
         }
         Spacer(Modifier.height(5.dp))
         Txt(label, size = T.micro, color = palette.textTertiary, maxLines = 1)

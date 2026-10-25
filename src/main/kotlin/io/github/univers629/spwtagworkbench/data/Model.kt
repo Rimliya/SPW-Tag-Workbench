@@ -88,7 +88,9 @@ data class CoverCandidate(
             val n = bytes?.size ?: 0
             val size =
                 when {
-                    n <= 0 -> "无数据"
+                    n <= 0 ->
+                        io.github.univers629.spwtagworkbench.core.i18n.L10n
+                            .t("model.noData")
                     n >= 1024 * 1024 ->
                         String.format(java.util.Locale.ROOT, "%.1fMB", n / (1024.0 * 1024.0))
                     else -> String.format(java.util.Locale.ROOT, "%.0fKB", maxOf(1.0, n / 1024.0))
@@ -98,7 +100,10 @@ data class CoverCandidate(
 
     /** 候选页左上角/角标用的来源名。 */
     val origin: String
-        get() = sourceLabel.ifBlank { "网络" }
+        get() = sourceLabel.ifBlank {
+            io.github.univers629.spwtagworkbench.core.i18n.L10n
+                .t("model.network")
+        }
 
     /**
      * 图片类型的可读标注，形如 `类型 3 · 专辑封面`。
@@ -107,9 +112,12 @@ data class CoverCandidate(
      */
     val typeLabel: String
         get() =
-            "类型 $pictureType · " +
+            io.github.univers629.spwtagworkbench.core.i18n.L10n.t(
+                "model.typeLabel",
+                pictureType,
                 io.github.univers629.spwtagworkbench.backend.read.PictureTypeStandard
-                    .label(pictureType)
+                    .label(pictureType),
+            )
 
     /**
      * 短边像素数。
@@ -151,7 +159,10 @@ data class CoverCandidate(
         Unknown(""),
 
         /** 偏小：只会出现在本地封面，界面标「低清」。 */
-        Low("低清"),
+        Low(
+            io.github.univers629.spwtagworkbench.core.i18n.L10n
+                .t("model.lowRes"),
+        ),
 
         /** 够清晰。 */
         Good(""),

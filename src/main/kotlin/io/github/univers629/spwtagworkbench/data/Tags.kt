@@ -10,6 +10,7 @@ import io.github.univers629.spwtagworkbench.backend.read.CoverMime
 import io.github.univers629.spwtagworkbench.backend.read.CoverStore
 import io.github.univers629.spwtagworkbench.backend.read.TrackReader
 import io.github.univers629.spwtagworkbench.backend.write.AudioTagWriter
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import java.io.File
 
 /**
@@ -109,7 +110,7 @@ object Tags {
         value: String,
         reloadLyricsForId: String? = null,
     ): Result {
-        val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
+        val track = ensureTrack(path) ?: return Result(false, L10n.t("err.fileUnreadable"))
         val outcome = AudioTagWriter.writeField(track, key.field, value, reloadLyricsForId)
         return Result(outcome.ok, decorate(outcome.message, ok = outcome.ok, refreshed = outcome.hostRefreshed))
     }
@@ -119,7 +120,7 @@ object Tags {
         lrcText: String,
         reloadLyricsForId: String? = null,
     ): Result {
-        val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
+        val track = ensureTrack(path) ?: return Result(false, L10n.t("err.fileUnreadable"))
         val outcome =
             AudioTagWriter.write(
                 track = track,
@@ -133,8 +134,8 @@ object Tags {
         path: String,
         bytes: ByteArray,
     ): Result {
-        val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
-        val cover = CoverMime.asCover(bytes) ?: return Result(false, "封面数据为空")
+        val track = ensureTrack(path) ?: return Result(false, L10n.t("err.fileUnreadable"))
+        val cover = CoverMime.asCover(bytes) ?: return Result(false, L10n.t("err.coverEmpty"))
         val outcome = AudioTagWriter.writeCover(track, cover)
         return Result(outcome.ok, decorate(outcome.message, ok = outcome.ok, refreshed = outcome.hostRefreshed))
     }
@@ -149,8 +150,8 @@ object Tags {
         path: String,
         bytes: ByteArray,
     ): Result {
-        val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
-        val cover = CoverMime.asCover(bytes) ?: return Result(false, "艺术家图数据为空")
+        val track = ensureTrack(path) ?: return Result(false, L10n.t("err.fileUnreadable"))
+        val cover = CoverMime.asCover(bytes) ?: return Result(false, L10n.t("err.artistCoverEmpty"))
         val outcome = AudioTagWriter.writeCover(track, cover, pictureType = 8)
         return Result(outcome.ok, decorate(outcome.message, ok = outcome.ok, refreshed = outcome.hostRefreshed))
     }
@@ -168,11 +169,11 @@ object Tags {
         values: Map<TagField, String>,
         reloadLyricsForId: String? = null,
     ): Result {
-        val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
-        if (values.isEmpty()) return Result(true, "没有要写入的增益数据")
+        val track = ensureTrack(path) ?: return Result(false, L10n.t("err.fileUnreadable"))
+        if (values.isEmpty()) return Result(true, L10n.t("err.noGainData"))
         val patch = TagPatch()
         for ((field, value) in values) {
-            require(field.isReplayGain) { "$field 不是 ReplayGain 字段" }
+            require(field.isReplayGain) { L10n.t("err.notGainField", field) }
             patch.set(field, value)
         }
         val outcome = AudioTagWriter.write(track, patch, reloadLyricsForId = reloadLyricsForId)
@@ -181,7 +182,7 @@ object Tags {
 
     /** 清除四个 ReplayGain 键（写空值即删除）。 */
     fun clearReplayGain(path: String): Result {
-        val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
+        val track = ensureTrack(path) ?: return Result(false, L10n.t("err.fileUnreadable"))
         val patch = TagPatch()
         for (field in TagField.replayGainFields) patch.set(field, "")
         val outcome = AudioTagWriter.write(track, patch)
@@ -207,5 +208,5 @@ object Tags {
         message: String,
         ok: Boolean,
         refreshed: Boolean,
-    ): String = if (ok && !refreshed) "$message（宿主刷新未响应）" else message
+    ): String = if (ok && !refreshed) L10n.t("status.hostRefreshMiss", message) else message
 }

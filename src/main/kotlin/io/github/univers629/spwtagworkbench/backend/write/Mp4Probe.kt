@@ -3,6 +3,7 @@
 
 package io.github.univers629.spwtagworkbench.backend.write
 
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -25,7 +26,7 @@ object Mp4Probe {
 
     /** Apple Music / iTunes 的加密文件（FairPlay），标签写入无意义。 */
     data object Drm : Issue {
-        override val message = "Apple Music 加密文件（FairPlay），无法写入标签"
+        override val message: String get() = L10n.t("err.mp4Encrypted")
     }
 
     /** 容器结构或索引异常，继续写会破坏文件。 */
@@ -34,7 +35,7 @@ object Mp4Probe {
     ) : Issue
 
     /** 只有一套封面（`covr`）的容器，写入艺术家图会覆盖专辑封面。 */
-    const val SINGLE_ARTWORK_MESSAGE = "M4A/MP4 容器只有一套封面（covr），不支持单独写入艺术家图"
+    val SINGLE_ARTWORK_MESSAGE: String get() = L10n.t("err.mp4SingleArtwork")
 
     private val BRANDS =
         setOf("M4A ", "M4B ", "M4P ", "M4V ", "M4R ", "mp41", "mp42", "isom", "iso2", "qt  ", "3gp4", "3gp5", "f4v ")

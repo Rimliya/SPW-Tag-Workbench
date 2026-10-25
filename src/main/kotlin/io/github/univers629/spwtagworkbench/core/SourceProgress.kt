@@ -3,6 +3,8 @@
 
 package io.github.univers629.spwtagworkbench.core
 
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
+
 /**
  * 已完成源数 / 总源数；没有源时返回 null（顶栏不画进度条）。
  *
@@ -12,6 +14,7 @@ package io.github.univers629.spwtagworkbench.core
  */
 fun sourceDoneFraction(states: List<Pair<String, String>>): Float? {
     if (states.isEmpty()) return null
-    val done = states.count { !it.second.contains("搜索中") && !it.second.contains("检索中") }
+    val searching = L10n.t("source.searching")
+    val done = states.count { !it.second.contains(searching) }
     return done.toFloat() / states.size
 }

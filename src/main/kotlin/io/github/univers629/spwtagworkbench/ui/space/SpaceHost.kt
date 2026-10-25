@@ -50,6 +50,7 @@ import io.github.univers629.spwtagworkbench.core.Salt
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.data.Repo
 import io.github.univers629.spwtagworkbench.data.Tags
 import io.github.univers629.spwtagworkbench.router.SharedKey
@@ -211,10 +212,9 @@ private fun AlbumBatchDialog() {
         onDismiss = { Repo.dismissAlbumBatch() },
         width = 420.dp,
     ) {
-        Txt("套用到同专辑", size = T.heading, color = pal.text, maxLines = 1)
+        Txt(L10n.t("dialog.applyToAlbum"), size = T.heading, color = pal.text, maxLines = 1)
         Txt(
-            text = "将把专辑 / 专辑艺术家 / 风格 / 年份 写入同专辑的 $count 首曲目，" +
-                "包括当前这首。这会直接修改磁盘文件，无法撤销。",
+            text = L10n.t("dialog.applyToAlbumBody", count),
             size = T.caption,
             color = pal.textSecondary,
         )
@@ -222,12 +222,12 @@ private fun AlbumBatchDialog() {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Spacer(Modifier.weight(1f))
             TapChip(
-                label = "取消",
+                label = L10n.t("action.cancel"),
                 onClick = { Repo.dismissAlbumBatch() },
                 accent = pal.textTertiary,
             )
             TapChip(
-                label = "写入 $count 首",
+                label = L10n.t("dialog.writeCount", count),
                 onClick = {
                     Repo.dismissAlbumBatch()
                     Repo.writeAlbumBatch(Tags.Key.ALBUM_LEVEL)

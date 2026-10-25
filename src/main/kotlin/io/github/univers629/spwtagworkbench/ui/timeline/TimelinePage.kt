@@ -66,6 +66,7 @@ import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
 import io.github.univers629.spwtagworkbench.core.fmtTimeFine
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.data.LyricLine
 import io.github.univers629.spwtagworkbench.data.Repo
 import io.github.univers629.spwtagworkbench.data.Status
@@ -160,13 +161,13 @@ fun TimelinePage(interactive: Boolean) {
 
     DetailScaffold(
         page = SpacePage.Timeline,
-        label = "打轴",
+        label = L10n.t("timeline.title"),
         interactive = interactive,
         actions = {
             SyncLight(synced = synced)
             if (!synced) {
                 TapChip(
-                    label = "切到本曲",
+                    label = L10n.t("timeline.followCurrent"),
                     onClick = { Repo.switchHostToFocused() },
                     accent = pal.warn,
                     enabled = interactive,
@@ -186,7 +187,7 @@ fun TimelinePage(interactive: Boolean) {
                 AxisStepButton("+") { Repo.stepPlaybackSpeed(1) }
             }
             TapChip(
-                label = if (follow) "跟随中" else "回到跟随",
+                label = if (follow) L10n.t("timeline.following") else L10n.t("timeline.backToFollow"),
                 onClick = {
                     follow = !follow
                     if (follow && Repo.currentLine >= 0) lineIndex = Repo.currentLine
@@ -195,7 +196,7 @@ fun TimelinePage(interactive: Boolean) {
                 enabled = interactive,
             )
             TapChip(
-                label = "写入标签",
+                label = L10n.t("timeline.writeTag"),
                 onClick = { Repo.saveLyrics() },
                 enabled = interactive && Repo.focused().hasFile,
             )
@@ -326,7 +327,7 @@ fun TimelinePage(interactive: Boolean) {
                                     }
                                 } else {
                                     Txt(
-                                        text = line?.text?.ifBlank { "（空行）" } ?: "先在歌词页载入歌词",
+                                        text = line?.text?.ifBlank { L10n.t("timeline.emptyLine") } ?: L10n.t("timeline.loadLyricsFirst"),
                                         size = T.title,
                                         color = if (synced) pal.text else pal.textSecondary,
                                         maxLines = 3,
@@ -336,16 +337,16 @@ fun TimelinePage(interactive: Boolean) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Txt(
                                         text = if (line != null && line.startMs >= 0) {
-                                            "行首 ${fmtTimeFine(line.startMs)}"
+                                            L10n.t("timeline.lineStart", fmtTimeFine(line.startMs))
                                         } else {
-                                            "行首未标记"
+                                            L10n.t("timeline.lineStartUnmarked")
                                         },
                                         size = T.micro,
                                         color = if (line != null && line.startMs >= 0) pal.accent else pal.textTertiary,
                                         maxLines = 1,
                                     )
                                     Spacer(Modifier.width(10.dp))
-                                    Txt("回车 标记并跳下一行", size = T.caption, color = pal.textTertiary, maxLines = 1)
+                                    Txt(L10n.t("timeline.hintEnter"), size = T.caption, color = pal.textTertiary, maxLines = 1)
                                 }
                             }
                         }
@@ -374,20 +375,20 @@ fun TimelinePage(interactive: Boolean) {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Tip("空格 播放/暂停")
-                            Tip("Tab 打当前字")
-                            Tip("↑↓ 换行")
-                            Tip("Del 清空本行")
+                            Tip(L10n.t("timeline.hintSpace"))
+                            Tip(L10n.t("timeline.hintTab"))
+                            Tip(L10n.t("timeline.hintArrows"))
+                            Tip(L10n.t("timeline.hintDelete"))
                             Spacer(Modifier.width(6.dp))
                             // **补全时间戳**：未打轴的字按前后已知时间插值补齐。
                             // 语义参考 StrangeUtaGame 的「补全时间戳」（默认 150ms 外扩）。
                             TapChip(
-                                label = "补全时间戳",
+                                label = L10n.t("timeline.fillTimestamps"),
                                 onClick = {
                                     val n = Repo.completeTimestamps(lineIndex)
                                     Repo.postStatus(
                                         Status(
-                                            if (n > 0) "已补全 $n 个字" else "没有可补全的字",
+                                            if (n > 0) L10n.t("timeline.filled", n) else L10n.t("timeline.noFillable"),
                                             if (n > 0) Status.Kind.Ok else Status.Kind.Warn,
                                         ),
                                     )
@@ -396,15 +397,15 @@ fun TimelinePage(interactive: Boolean) {
                             )
                             // **批量平移**：行级 / 字级各一组，每次 10ms，可反复叠加。
                             // 参考 StrangeUtaGame 的「调整原始时间戳」：点一次叠一次。
-                            Tip("行")
+                            Tip(L10n.t("timeline.line"))
                             AxisStepButton("−") { Repo.shiftLineTimestamps(lineIndex, -10L) }
                             AxisStepButton("+") { Repo.shiftLineTimestamps(lineIndex, 10L) }
-                            Tip("字")
+                            Tip(L10n.t("timeline.char"))
                             AxisStepButton("−") { Repo.shiftCellTimestamps(lineIndex, cellIndex, -10L) }
                             AxisStepButton("+") { Repo.shiftCellTimestamps(lineIndex, cellIndex, 10L) }
                             Spacer(Modifier.weight(1f))
                             TapChip(
-                                label = "清空本行",
+                                label = L10n.t("timeline.clearLine"),
                                 onClick = {
                                     Repo.clearLineTiming(lineIndex)
                                     cellIndex = 0
@@ -423,14 +424,14 @@ fun TimelinePage(interactive: Boolean) {
                     // Compose 里直接 weight 即可表达固定比例，不像 Swing 要先占首选尺寸。
                     Column(Modifier.width(340.dp).fillMaxHeight().padding(horizontal = 10.dp)) {
                         Spacer(Modifier.height(8.dp))
-                        PanelCard("行", Modifier.weight(3f).fillMaxWidth()) {
+                        PanelCard(L10n.t("timeline.line"), Modifier.weight(3f).fillMaxWidth()) {
                             LineTimePanel(
                                 lineIndex = lineIndex,
                                 line = line,
                             )
                         }
                         Spacer(Modifier.height(8.dp))
-                        PanelCard("分片", Modifier.weight(3f).fillMaxWidth()) {
+                        PanelCard(L10n.t("timeline.split"), Modifier.weight(3f).fillMaxWidth()) {
                             CellTimePanel(
                                 lineIndex = lineIndex,
                                 cellIndex = cellIndex,
@@ -439,7 +440,7 @@ fun TimelinePage(interactive: Boolean) {
                             )
                         }
                         Spacer(Modifier.height(8.dp))
-                        PanelCard("原文本", Modifier.weight(4f).fillMaxWidth()) {
+                        PanelCard(L10n.t("timeline.sourceText"), Modifier.weight(4f).fillMaxWidth()) {
                             RawLineEditor(
                                 line = line,
                                 enabled = interactive,
@@ -465,7 +466,7 @@ private fun SyncLight(synced: Boolean) {
         )
         Spacer(Modifier.width(6.dp))
         Txt(
-            text = if (synced) "已同步" else "未同步",
+            text = if (synced) L10n.t("timeline.synced") else L10n.t("timeline.unsynced"),
             size = T.micro,
             color = if (synced) pal.accent else pal.warn,
             maxLines = 1,
@@ -522,7 +523,7 @@ private fun LineRow(
         )
         Spacer(Modifier.width(6.dp))
         Txt(
-            text = line.text.ifBlank { "（空行）" },
+            text = line.text.ifBlank { L10n.t("timeline.emptyLine") },
             size = T.micro,
             color = if (selected) pal.text else pal.textSecondary,
             maxLines = 1,
@@ -540,7 +541,7 @@ private fun WordCards(
 ) {
     val pal = Salt
     if (line == null || units.isEmpty()) {
-        Txt("这一行没有可切分的字", size = T.micro, color = pal.textTertiary, maxLines = 1)
+        Txt(L10n.t("timeline.noSplittable"), size = T.micro, color = pal.textTertiary, maxLines = 1)
         return
     }
     val starts: List<Long> = if (line.cells.isNotEmpty()) line.cells.map { it.startMs } else emptyList()
@@ -1073,7 +1074,7 @@ private fun KaraokePreview(
     val pal = Salt
     if (line == null || units.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
-            Txt("没有可预览的歌词", size = T.micro, color = pal.textTertiary, maxLines = 2)
+            Txt(L10n.t("timeline.noPreview"), size = T.micro, color = pal.textTertiary, maxLines = 2)
         }
         return
     }
@@ -1305,7 +1306,7 @@ private fun LineTimePanel(
     val pal = Salt
     if (line == null) {
         Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
-            Txt("先选一行", size = T.micro, color = pal.textTertiary, maxLines = 1)
+            Txt(L10n.t("timeline.selectLineFirst"), size = T.micro, color = pal.textTertiary, maxLines = 1)
         }
         return
     }
@@ -1314,12 +1315,12 @@ private fun LineTimePanel(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         TimeField(
-            label = "行首",
+            label = L10n.t("timeline.lineStartLabel"),
             valueMs = line.startMs,
             stepMs = AXIS_TIME_STEP_MS,
         ) { Repo.setLineTime(lineIndex, it, line.endMs) }
         TimeField(
-            label = "行尾",
+            label = L10n.t("timeline.lineEndLabel"),
             valueMs = line.endMs,
             stepMs = AXIS_TIME_STEP_MS,
         ) { Repo.setLineTime(lineIndex, line.startMs, it) }
@@ -1338,7 +1339,7 @@ private fun CellTimePanel(
     val cell = line?.cells?.getOrNull(cellIndex)
     if (line == null || cell == null) {
         Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
-            Txt("先选一个分片", size = T.micro, color = pal.textTertiary, maxLines = 1)
+            Txt(L10n.t("timeline.selectFragmentFirst"), size = T.micro, color = pal.textTertiary, maxLines = 1)
         }
         return
     }
@@ -1353,12 +1354,12 @@ private fun CellTimePanel(
             maxLines = 2,
         )
         TimeField(
-            label = "字首",
+            label = L10n.t("timeline.charStart"),
             valueMs = cell.startMs,
             stepMs = AXIS_TIME_STEP_MS,
         ) { Repo.setCellTime(lineIndex, cellIndex, it, cell.endMs) }
         TimeField(
-            label = "字尾",
+            label = L10n.t("timeline.charEnd"),
             valueMs = cell.endMs,
             stepMs = AXIS_TIME_STEP_MS,
         ) { Repo.setCellTime(lineIndex, cellIndex, cell.startMs, it) }
@@ -1405,7 +1406,7 @@ private fun RawLineEditor(
     val pal = Salt
     if (line == null) {
         Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
-            Txt("先选一行", size = T.micro, color = pal.textTertiary, maxLines = 1)
+            Txt(L10n.t("timeline.selectLineFirst"), size = T.micro, color = pal.textTertiary, maxLines = 1)
         }
         return
     }
@@ -1421,7 +1422,7 @@ private fun RawLineEditor(
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
         Mono(
-            text = spl.ifBlank { "（空行）" },
+            text = spl.ifBlank { L10n.t("timeline.emptyLine") },
             size = T.caption,
             color = pal.textSecondary,
             // 源文本允许换行：Mono 默认 maxLines=1，长行会被截断

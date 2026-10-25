@@ -18,6 +18,7 @@ import io.github.univers629.spwtagworkbench.backend.read.JtUserFields
 import io.github.univers629.spwtagworkbench.backend.read.OggTags
 import io.github.univers629.spwtagworkbench.core.Diag
 import io.github.univers629.spwtagworkbench.core.Settings
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import org.jaudiotagger.audio.AudioFile
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
@@ -52,10 +53,10 @@ object AudioTagWriter {
     const val PICTURE_ARTIST = 8
 
     /** APEv2 容器只有一套封面（`Cover Art (Front)`）。 */
-    const val APE_SINGLE_ARTWORK_MESSAGE = "APEv2 容器（APE/WV/TAK/TTA/MPC）只有一套封面，不支持单独写入艺术家图"
+    val APE_SINGLE_ARTWORK_MESSAGE: String get() = L10n.t("err.apeSingleArtwork")
 
     /** 该容器只能放一张图片，装不下两个艺术家图槽位。 */
-    const val MULTI_ARTIST_UNSUPPORTED = "该容器只能放一张图片，暂不支持同时写入两张艺术家图"
+    val MULTI_ARTIST_UNSUPPORTED: String get() = L10n.t("err.multiArtistUnsupported")
 
     /** 临时文件标记。扫描器据此排除，避免把写了一半的副本当歌曲导入。 */
     const val TEMP_INFIX = ".spw-write-"
@@ -213,9 +214,12 @@ object AudioTagWriter {
                 ok = true,
                 message =
                     buildString {
-                        append("已写入 ${fields.size} 个字段")
-                        if (cover != null) append(" + 封面")
-                        if (!refreshed) append("（宿主刷新未响应）")
+                        if (cover != null) {
+                            append(L10n.t("status.wroteFieldsCover", fields.size))
+                        } else {
+                            append(L10n.t("status.wroteFields", fields.size))
+                        }
+                        if (!refreshed) append(L10n.t("status.hostRefreshSuffix"))
                     },
                 writtenFields = fields,
                 hostRefreshed = refreshed,

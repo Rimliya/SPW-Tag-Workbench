@@ -36,6 +36,7 @@ import io.github.univers629.spwtagworkbench.core.Salt
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.core.sourceDoneFraction
 import io.github.univers629.spwtagworkbench.data.CoverCandidate
 import io.github.univers629.spwtagworkbench.data.CoverTile
@@ -68,13 +69,13 @@ fun CoverPage(interactive: Boolean) {
 
     DetailScaffold(
         page = SpacePage.Cover,
-        label = "封面",
+        label = L10n.t("cover.title"),
         interactive = interactive,
         coverSize = 92.dp,
         progress = sourceDoneFraction(Repo.coverSourceStates()),
         actions = {
             TapChip(
-                label = "写入草稿",
+                label = L10n.t("action.writeDraft"),
                 onClick = { Repo.applyCover() },
                 enabled = interactive && checked != null && Repo.focused().hasFile,
             )
@@ -91,7 +92,7 @@ fun CoverPage(interactive: Boolean) {
                         .padding(horizontal = 18.dp, vertical = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Txt("封面预览", size = T.micro, color = palette.textTertiary, maxLines = 1)
+                Txt(L10n.t("cover.preview"), size = T.micro, color = palette.textTertiary, maxLines = 1)
                 Spacer(Modifier.height(8.dp))
                 Box(
                     modifier =
@@ -107,7 +108,7 @@ fun CoverPage(interactive: Boolean) {
                     if (local != null) {
                         Image(
                             bitmap = local,
-                            contentDescription = "本地封面",
+                            contentDescription = L10n.t("cover.local"),
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -120,7 +121,7 @@ fun CoverPage(interactive: Boolean) {
                 }
                 Spacer(Modifier.height(8.dp))
                 Txt(
-                    text = Repo.localCoverInfo.ifBlank { "无封面" },
+                    text = Repo.localCoverInfo.ifBlank { L10n.t("cover.none") },
                     size = T.caption,
                     color = palette.textSecondary,
                     maxLines = 1,
@@ -130,9 +131,9 @@ fun CoverPage(interactive: Boolean) {
                 Spacer(Modifier.height(14.dp))
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TapChip(
-                        label = "导入",
+                        label = L10n.t("action.import"),
                         onClick = {
-                            pickImageFile("选择封面图片") {
+                            pickImageFile(L10n.t("cover.pickImage")) {
                                 Repo.importImage(it, artistMode = false)
                             }
                         },
@@ -140,7 +141,7 @@ fun CoverPage(interactive: Boolean) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                     TapChip(
-                        label = "导出",
+                        label = L10n.t("action.export"),
                         onClick = {
                             saveImageFile(suggestedName("cover", checked)) { path ->
                                 Repo.exportCover(path, artistMode = false)
@@ -152,7 +153,7 @@ fun CoverPage(interactive: Boolean) {
                     // 与主视图的「套用到同专辑」同一个入口：把当前曲目的专辑级字段
                     // 写进同专辑全部曲目。确认弹窗由 SpaceCanvas 根级统一渲染。
                     TapChip(
-                        label = "套用到同专辑",
+                        label = L10n.t("workbench.applyToAlbum"),
                         onClick = { Repo.requestAlbumBatch() },
                         enabled = interactive && Repo.focused().hasFile,
                         modifier = Modifier.fillMaxWidth(),
@@ -172,11 +173,11 @@ fun CoverPage(interactive: Boolean) {
                         .padding(horizontal = 18.dp, vertical = 14.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Txt("候选封面", size = T.heading, color = palette.text, maxLines = 1)
+                    Txt(L10n.t("cover.candidates"), size = T.heading, color = palette.text, maxLines = 1)
                     Spacer(Modifier.weight(1f))
                     if (checked != null) {
                         Txt(
-                            text = "已勾选：${checked.origin}",
+                            text = L10n.t("common.checked", checked.origin),
                             size = T.caption,
                             color = palette.accent,
                             maxLines = 1,
@@ -189,8 +190,8 @@ fun CoverPage(interactive: Boolean) {
                 if (slots.isEmpty()) {
                     EmptyState(
                         glyph = "◉",
-                        title = if (Repo.coverLoading) "正在检索网络封面…" else "还没有网络结果",
-                        hint = "换一首曲目会重新检索",
+                        title = if (Repo.coverLoading) L10n.t("cover.searchingNetwork") else L10n.t("cover.noResults"),
+                        hint = L10n.t("common.researchOnTrackChange"),
                         modifier = Modifier.fillMaxWidth().height(180.dp),
                     )
                 } else {
@@ -345,7 +346,7 @@ internal fun pickImageFile(
                                 f.extension.lowercase() in
                                 setOf("jpg", "jpeg", "png", "webp", "bmp", "gif")
 
-                        override fun getDescription() = "图片 (jpg / png / webp)"
+                        override fun getDescription() = L10n.t("cover.imageFilter")
                     }
             }
         if (chooser.showOpenDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {
@@ -361,7 +362,7 @@ internal fun saveImageFile(
     Thread {
         val chooser =
             javax.swing.JFileChooser().apply {
-                dialogTitle = "导出图片"
+                dialogTitle = L10n.t("cover.exportTitle")
                 selectedFile = java.io.File(defaultName)
             }
         if (chooser.showSaveDialog(null) == javax.swing.JFileChooser.APPROVE_OPTION) {

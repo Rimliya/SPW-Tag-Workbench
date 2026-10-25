@@ -51,6 +51,7 @@ import io.github.univers629.spwtagworkbench.core.Settings
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.Txt
 import io.github.univers629.spwtagworkbench.core.fmtTime
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.core.sidebarSolid
 import io.github.univers629.spwtagworkbench.data.Drafts
 import io.github.univers629.spwtagworkbench.data.Repo
@@ -262,7 +263,8 @@ private fun SidebarPanel(
                 if (!meta.isPresent) {
                     Spacer(Modifier.height(20.dp))
                     Txt(
-                        text = "当前没有播放中的曲目。\n宿主开始播放后，这里会显示曲目信息。",
+                        text = io.github.univers629.spwtagworkbench.core.i18n.L10n
+                            .t("sidebar.empty"),
                         size = T.caption,
                         color = palette.textTertiary,
                         maxLines = 3,
@@ -281,44 +283,44 @@ private fun SidebarPanel(
                 // 回放增益由一键测量产生，单独置顶，与可手填字段分离。
                 Spacer(Modifier.height(14.dp))
                 PairRow(
-                    first = Triple("音轨增益", meta.replayGainTrackGain, Tags.Key.TrackGain),
-                    second = Triple("音轨峰值", meta.replayGainTrackPeak, Tags.Key.TrackPeak),
+                    first = Triple(L10n.tagLabel(TagField.ReplayGainTrackGain), meta.replayGainTrackGain, Tags.Key.TrackGain),
+                    second = Triple(L10n.tagLabel(TagField.ReplayGainTrackPeak), meta.replayGainTrackPeak, Tags.Key.TrackPeak),
                     editable = meta.hasFile,
                     firstChanged = TagField.ReplayGainTrackGain in changed,
                     secondChanged = TagField.ReplayGainTrackPeak in changed,
                 )
                 PairRow(
-                    first = Triple("专辑增益", meta.replayGainAlbumGain, Tags.Key.AlbumGain),
-                    second = Triple("专辑峰值", meta.replayGainAlbumPeak, Tags.Key.AlbumPeak),
+                    first = Triple(L10n.tagLabel(TagField.ReplayGainAlbumGain), meta.replayGainAlbumGain, Tags.Key.AlbumGain),
+                    second = Triple(L10n.tagLabel(TagField.ReplayGainAlbumPeak), meta.replayGainAlbumPeak, Tags.Key.AlbumPeak),
                     editable = meta.hasFile,
                     firstChanged = TagField.ReplayGainAlbumGain in changed,
                     secondChanged = TagField.ReplayGainAlbumPeak in changed,
                 )
                 Spacer(Modifier.height(6.dp))
 
-                MetaField("标题", meta.title, Tags.Key.Title, meta.hasFile, TagField.Title in changed)
-                MetaField("艺术家", meta.artist, Tags.Key.Artist, meta.hasFile, TagField.Artist in changed)
-                MetaField("专辑", meta.album, Tags.Key.Album, meta.hasFile, TagField.Album in changed)
-                MetaField("年份", meta.year, Tags.Key.Year, meta.hasFile, TagField.Year in changed)
+                MetaField(L10n.tagLabel(TagField.Title), meta.title, Tags.Key.Title, meta.hasFile, TagField.Title in changed)
+                MetaField(L10n.tagLabel(TagField.Artist), meta.artist, Tags.Key.Artist, meta.hasFile, TagField.Artist in changed)
+                MetaField(L10n.tagLabel(TagField.Album), meta.album, Tags.Key.Album, meta.hasFile, TagField.Album in changed)
+                MetaField(L10n.tagLabel(TagField.Year), meta.year, Tags.Key.Year, meta.hasFile, TagField.Year in changed)
                 PairRow(
-                    first = Triple("音轨号", meta.track, Tags.Key.Track),
-                    second = Triple("碟号", meta.disc, Tags.Key.Disc),
+                    first = Triple(L10n.tagLabel(TagField.Track), meta.track, Tags.Key.Track),
+                    second = Triple(L10n.tagLabel(TagField.Disc), meta.disc, Tags.Key.Disc),
                     editable = meta.hasFile,
                     firstChanged = TagField.Track in changed,
                     secondChanged = TagField.Disc in changed,
                 )
-                MetaField("风格", meta.genre, Tags.Key.Genre, meta.hasFile, TagField.Genre in changed)
+                MetaField(L10n.tagLabel(TagField.Genre), meta.genre, Tags.Key.Genre, meta.hasFile, TagField.Genre in changed)
                 MetaField(
-                    "专辑艺术家",
+                    L10n.tagLabel(TagField.AlbumArtist),
                     meta.albumArtist,
                     Tags.Key.AlbumArtist,
                     meta.hasFile,
                     TagField.AlbumArtist in changed,
                 )
-                MetaField("作曲家", meta.composer, Tags.Key.Composer, meta.hasFile, TagField.Composer in changed)
-                MetaField("作词家", meta.lyricist, Tags.Key.Lyricist, meta.hasFile, TagField.Lyricist in changed)
+                MetaField(L10n.tagLabel(TagField.Composer), meta.composer, Tags.Key.Composer, meta.hasFile, TagField.Composer in changed)
+                MetaField(L10n.tagLabel(TagField.Lyricist), meta.lyricist, Tags.Key.Lyricist, meta.hasFile, TagField.Lyricist in changed)
                 MetaField(
-                    label = "注释",
+                    label = L10n.tagLabel(TagField.Comment),
                     value = meta.comment,
                     key = Tags.Key.Comment,
                     editable = meta.hasFile,
@@ -396,7 +398,7 @@ private fun AnchorCard(meta: TrackMeta) {
                         },
                 ) {
                     Txt(
-                        text = meta.title.ifBlank { "未知标题" },
+                        text = meta.title.ifBlank { L10n.t("sidebar.unknownTitle") },
                         size = T.label,
                         color = palette.text,
                         weight = FontWeight.Medium,
@@ -405,14 +407,14 @@ private fun AnchorCard(meta: TrackMeta) {
                 }
                 Spacer(Modifier.height(3.dp))
                 Txt(
-                    text = meta.artist.ifBlank { "未知艺术家" },
+                    text = meta.artist.ifBlank { L10n.t("sidebar.unknownArtist") },
                     size = T.caption,
                     color = palette.textSecondary,
                     maxLines = 1,
                 )
                 Spacer(Modifier.height(2.dp))
                 Txt(
-                    text = meta.album.ifBlank { "未知专辑" },
+                    text = meta.album.ifBlank { L10n.t("sidebar.unknownAlbum") },
                     size = T.caption,
                     color = palette.textTertiary,
                     maxLines = 1,
@@ -423,7 +425,7 @@ private fun AnchorCard(meta: TrackMeta) {
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     Txt(
-                        text = if (Repo.playing) "播放中" else "已暂停",
+                        text = if (Repo.playing) L10n.t("sidebar.playing") else L10n.t("sidebar.paused"),
                         size = T.caption,
                         color = if (Repo.playing) palette.accent else palette.textTertiary,
                         maxLines = 1,
@@ -463,7 +465,7 @@ private fun MetaField(
             value = value,
             onCommit = { Repo.stageField(key, it) },
             modifier = Modifier.weight(1f),
-            placeholder = "未填写",
+            placeholder = L10n.t("field.placeholder"),
             singleLine = lines <= 1,
             readOnly = !editable,
             size = T.label,
@@ -497,7 +499,7 @@ private fun PairRow(
             value = first.second,
             onCommit = { Repo.stageField(first.third, it) },
             modifier = Modifier.weight(1f),
-            placeholder = "未填写",
+            placeholder = L10n.t("field.placeholder"),
             readOnly = !editable,
             size = T.label,
         )
@@ -512,7 +514,7 @@ private fun PairRow(
             value = second.second,
             onCommit = { Repo.stageField(second.third, it) },
             modifier = Modifier.weight(1f),
-            placeholder = "未填写",
+            placeholder = L10n.t("field.placeholder"),
             readOnly = !editable,
             size = T.label,
         )
@@ -583,10 +585,10 @@ private fun OpenWorkbenchButton(onClose: () -> Unit) {
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Txt("打开工作台", size = T.label, color = palette.accent, maxLines = 1)
+                Txt(L10n.t("sidebar.openWorkbench"), size = T.label, color = palette.accent, maxLines = 1)
                 Spacer(Modifier.height(2.dp))
                 Txt(
-                    text = "歌词 · 封面 · 频谱 · 打轴",
+                    text = L10n.t("sidebar.openWorkbenchSub"),
                     size = T.caption,
                     color = palette.textTertiary,
                     maxLines = 1,

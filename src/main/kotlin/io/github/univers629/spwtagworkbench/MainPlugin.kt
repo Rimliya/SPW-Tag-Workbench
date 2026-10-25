@@ -10,8 +10,10 @@ import com.xuncorp.spw.workshop.api.PluginPermission
 import com.xuncorp.spw.workshop.api.SpwPlugin
 import com.xuncorp.spw.workshop.api.WorkshopApi
 import io.github.univers629.spwtagworkbench.core.Diag
+import io.github.univers629.spwtagworkbench.core.HostLanguage
 import io.github.univers629.spwtagworkbench.core.PluginEnv
 import io.github.univers629.spwtagworkbench.core.Settings
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.data.Repo
 import io.github.univers629.spwtagworkbench.router.ShellState
 import io.github.univers629.spwtagworkbench.router.SpacePage
@@ -51,6 +53,7 @@ class MainPlugin(
     override fun start() {
         // 先绑定宿主给出的插件 ID：后面所有落数据目录的逻辑都依赖它
         PluginEnv.bind(pluginContext.pluginId)
+        L10n.install(HostLanguage.effectiveTag())
         Settings.load()
         // 清掉上次异常退出可能残留的草稿图片临时文件
         io.github.univers629.spwtagworkbench.data.Drafts
@@ -380,7 +383,7 @@ class MainPlugin(
         @JvmStatic
         fun openSourcePage() {
             try {
-                check(java.awt.Desktop.isDesktopSupported()) { "当前环境不支持打开浏览器" }
+                check(java.awt.Desktop.isDesktopSupported()) { L10n.t("misc.browserUnsupported") }
                 java.awt.Desktop
                     .getDesktop()
                     .browse(java.net.URI.create(SOURCE_URL))
@@ -389,7 +392,7 @@ class MainPlugin(
                 Diag.log("openSourcePage 失败：${t.javaClass.simpleName} ${t.message.orEmpty().take(80)}")
                 runCatching {
                     WorkshopApi.ui.toast(
-                        "无法打开开源页面：${t.message.orEmpty().take(60)}",
+                        L10n.t("misc.openSourceFailed", t.message.orEmpty().take(60)),
                         WorkshopApi.Ui.ToastType.Error,
                     )
                 }

@@ -46,6 +46,7 @@ import io.github.univers629.spwtagworkbench.core.Salt
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.Txt
 import io.github.univers629.spwtagworkbench.core.fmtTime
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.data.Drafts
 import io.github.univers629.spwtagworkbench.data.Repo
 import io.github.univers629.spwtagworkbench.data.Selection
@@ -140,13 +141,13 @@ fun LibraryPanel(
                         .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Txt("曲库", size = T.heading, color = palette.text, maxLines = 1)
+                Txt(L10n.t("library.title"), size = T.heading, color = palette.text, maxLines = 1)
                 Spacer(Modifier.width(8.dp))
                 Txt("${filtered.size}", size = T.micro, color = palette.textTertiary, maxLines = 1)
                 Spacer(Modifier.width(8.dp))
                 val checkedCount = Selection.checkedCount
                 if (checkedCount > 0) {
-                    Txt("已选 $checkedCount", size = T.micro, color = palette.accent, maxLines = 1)
+                    Txt(L10n.t("library.selected", checkedCount), size = T.micro, color = palette.accent, maxLines = 1)
                 }
                 Spacer(Modifier.weight(1f))
                 // 全选：作用于当前搜索结果
@@ -161,7 +162,7 @@ fun LibraryPanel(
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                 ) {
                     Txt(
-                        text = if (allChecked) "取消全选" else "全选",
+                        text = if (allChecked) L10n.t("library.deselectAll") else L10n.t("library.selectAll"),
                         size = T.caption,
                         color = palette.textSecondary,
                         maxLines = 1,
@@ -223,7 +224,7 @@ fun LibraryPanel(
                         Box(contentAlignment = Alignment.CenterStart) {
                             if (query.isEmpty()) {
                                 Txt(
-                                    text = "搜索标题 / 艺术家 / 专辑",
+                                    text = L10n.t("library.searchPlaceholder"),
                                     size = T.label,
                                     color = palette.textTertiary,
                                     maxLines = 1,
@@ -239,13 +240,13 @@ fun LibraryPanel(
 
             if (Repo.libraryLoading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Txt("读取曲库…", size = T.caption, color = palette.textTertiary, maxLines = 1)
+                    Txt(L10n.t("library.loading"), size = T.caption, color = palette.textTertiary, maxLines = 1)
                 }
             } else if (filtered.isEmpty()) {
                 EmptyState(
                     glyph = "♫",
-                    title = if (query.isBlank()) "曲库为空" else "无匹配结果",
-                    hint = if (query.isBlank()) "先在宿主里添加音乐" else null,
+                    title = if (query.isBlank()) L10n.t("library.empty") else L10n.t("library.noMatch"),
+                    hint = if (query.isBlank()) L10n.t("library.addMusicHint") else null,
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
@@ -316,7 +317,7 @@ private fun LibraryRow(
 
         Column(Modifier.weight(1f)) {
             Txt(
-                text = track.title.ifBlank { "未知标题" },
+                text = track.title.ifBlank { L10n.t("sidebar.unknownTitle") },
                 size = T.label,
                 color = if (selected) palette.text else palette.textSecondary,
                 weight = if (selected) FontWeight.Medium else FontWeight.Normal,
@@ -325,7 +326,7 @@ private fun LibraryRow(
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Txt(
-                    text = track.artist.ifBlank { "未知艺术家" },
+                    text = track.artist.ifBlank { L10n.t("sidebar.unknownArtist") },
                     size = T.micro,
                     color = palette.textTertiary,
                     maxLines = 1,
@@ -333,14 +334,14 @@ private fun LibraryRow(
                 )
                 if (selection?.failed == true) {
                     Spacer(Modifier.width(6.dp))
-                    Txt("失败", size = T.caption, color = palette.warn, maxLines = 1)
+                    Txt(L10n.t("shell.failed"), size = T.caption, color = palette.warn, maxLines = 1)
                 } else if (selection?.needsConfirm == true) {
                     Spacer(Modifier.width(6.dp))
-                    Txt("需确认", size = T.caption, color = palette.warn, maxLines = 1)
+                    Txt(L10n.t("library.needConfirm"), size = T.caption, color = palette.warn, maxLines = 1)
                 }
                 if (Drafts.draftFor(track.key) != null) {
                     Spacer(Modifier.width(6.dp))
-                    Txt("待保存", size = T.caption, color = palette.accent, maxLines = 1)
+                    Txt(L10n.t("library.pendingSave"), size = T.caption, color = palette.accent, maxLines = 1)
                 }
             }
         }
@@ -368,7 +369,7 @@ private fun FilterRow(
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         // 每个按钮各自包一层 Box：菜单以该按钮为锚点，从下沿弹出
         Box {
-            FilterChip("专辑", albums.size, expanded == "album") {
+            FilterChip(L10n.t("field.album"), albums.size, expanded == "album") {
                 expanded = if (expanded == "album") null else "album"
             }
             MenuPopup(expanded = expanded == "album", onDismiss = { expanded = null }, width = 210.dp) {
@@ -376,7 +377,7 @@ private fun FilterRow(
             }
         }
         Box {
-            FilterChip("艺术家", artists.size, expanded == "artist") {
+            FilterChip(L10n.t("field.artist"), artists.size, expanded == "artist") {
                 expanded = if (expanded == "artist") null else "artist"
             }
             MenuPopup(expanded = expanded == "artist", onDismiss = { expanded = null }, width = 210.dp) {
@@ -384,7 +385,7 @@ private fun FilterRow(
             }
         }
         Box {
-            FilterChip("流派", genres.size, expanded == "genre") {
+            FilterChip(L10n.t("library.genreFilter"), genres.size, expanded == "genre") {
                 expanded = if (expanded == "genre") null else "genre"
             }
             MenuPopup(expanded = expanded == "genre", onDismiss = { expanded = null }, width = 210.dp) {
@@ -403,7 +404,7 @@ private fun FilterRow(
                             onGenres(emptySet())
                         }.padding(horizontal = 6.dp, vertical = 4.dp),
             ) {
-                Txt("清空", size = T.caption, color = palette.accent, maxLines = 1)
+                Txt(L10n.t("shell.clear"), size = T.caption, color = palette.accent, maxLines = 1)
             }
         }
     }
@@ -419,7 +420,7 @@ private fun FilterMenuBody(
     onChange: (Set<String>) -> Unit,
 ) {
     MenuRow(
-        label = "清除（已选 ${selected.size}）",
+        label = L10n.t("library.clearSelected", selected.size),
         showCheck = false,
         accent = Salt.accent,
         onClick = { onChange(emptySet()) },

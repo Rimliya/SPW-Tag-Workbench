@@ -44,6 +44,7 @@ import io.github.univers629.spwtagworkbench.backend.write.AudioTagWriter
 import io.github.univers629.spwtagworkbench.backend.write.BatchWriter
 import io.github.univers629.spwtagworkbench.core.Diag
 import io.github.univers629.spwtagworkbench.core.Host
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -138,7 +139,7 @@ object Repo {
     /** 请求批量写入（弹出确认）。 */
     fun requestAlbumBatch() {
         if (albumBatchCount == 0) {
-            postStatus(Status("没有同专辑的曲目可写", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.noAlbumTracks"), Status.Kind.Warn))
             return
         }
         pendingAlbumBatch = true
@@ -170,9 +171,9 @@ object Repo {
         val target = speedSteps[next]
         if (HostBridge.setPlaybackSpeed(target)) {
             playbackSpeed = target
-            postStatus(Status("倍速：${target}x", Status.Kind.Ok))
+            postStatus(Status(L10n.t("status.speed", target), Status.Kind.Ok))
         } else {
-            postStatus(Status("宿主的倍速接口不可用", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.speedUnavailable"), Status.Kind.Warn))
         }
     }
 
@@ -374,7 +375,7 @@ object Repo {
             )
         editedLines = list
         lines = list
-        postStatus(Status("整行时间 ${if (deltaMs >= 0) "+" else ""}$deltaMs ms", Status.Kind.Ok))
+        postStatus(Status(L10n.t("status.lineShift", (if (deltaMs >= 0) "+" else "") + deltaMs + " ms"), Status.Kind.Ok))
     }
 
     /** 批量平移当前选中字的时间戳。 */
@@ -396,7 +397,7 @@ object Repo {
         list[lineIndex] = line.copy(cells = cells)
         editedLines = list
         lines = list
-        postStatus(Status("该字时间 ${if (deltaMs >= 0) "+" else ""}$deltaMs ms", Status.Kind.Ok))
+        postStatus(Status(L10n.t("status.charShift", (if (deltaMs >= 0) "+" else "") + deltaMs + " ms"), Status.Kind.Ok))
     }
 
     /** 直接改写某个字的首/尾时间（毫秒）。传 -1 表示未标记。 */
@@ -501,9 +502,9 @@ object Repo {
         if (post) {
             val on =
                 listOfNotNull(
-                    "原文".takeIf { lyricShowOriginal },
-                    "译文".takeIf { lyricShowTranslation },
-                    "罗马音".takeIf { lyricShowRomanization },
+                    L10n.t("lyrics.sourceText").takeIf { lyricShowOriginal },
+                    L10n.t("lyrics.translation").takeIf { lyricShowTranslation },
+                    L10n.t("lyrics.romanization").takeIf { lyricShowRomanization },
                 )
             postStatus(
                 Status(
@@ -802,7 +803,7 @@ object Repo {
                     // 曲库里没有时至少保留当前播放
                     if (library.isEmpty() && track.isPresent) library = listOf(track)
                 } else {
-                    postStatus(Status("曲库读取失败", Status.Kind.Error))
+                    postStatus(Status(L10n.t("status.libraryFailed"), Status.Kind.Error))
                 }
             }
         }
@@ -915,7 +916,7 @@ object Repo {
         editedLines = parsed
         // 宿主时间轴不是「源文本」——它是解析后的结果，所以这里不覆盖 lyricText，
         // 只把视图标记成已解析，避免编辑栏把空源文本当成用户改过
-        lyricSource = "宿主时间轴"
+        lyricSource = L10n.t("status2.hostTimeline")
     }
 
     fun onLyricLine(raw: PlaybackExtensionPoint.LyricsLine?) {
@@ -1028,7 +1029,7 @@ object Repo {
                 lyricSource =
                     when {
                         parsed.isEmpty() -> ""
-                        raw != null -> "内嵌歌词"
+                        raw != null -> L10n.t("status2.embeddedLyrics")
                         else -> ""
                     }
             }
@@ -1087,31 +1088,31 @@ object Repo {
     fun convertLyricFormat(label: String) {
         val key = focused().key
         if (lyricText.isBlank()) {
-            postStatus(Status("没有歌词可转换", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.noLyrics"), Status.Kind.Warn))
             return
         }
         val target = LyricsFormat.Format.entries.firstOrNull { it.label == label }
         if (target == null) {
-            postStatus(Status("不支持的格式：$label", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.unsupportedFormat", label), Status.Kind.Warn))
             return
         }
         // TTML 只保留解析（读），不提供写出：
         // 它实际只存在于 Apple Music，而取它需要账号凭据，本插件没有合法取源。
         if (target == LyricsFormat.Format.TTML) {
-            postStatus(Status("TTML 仅支持读取，暂不支持写出", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.ttmlReadOnly"), Status.Kind.Warn))
             return
         }
         // 只记录「选了什么格式」，真正的转换在 rerenderLyrics 里从基准算一遍
         lyricFormatChoice = target.label
         rerenderLyrics()
-        postStatus(Status("格式：$label（${lyricText.lineSequence().count { it.isNotBlank() }} 行）", Status.Kind.Ok))
+        postStatus(Status(L10n.t("status.formatRows", label, lyricText.lineSequence().count { it.isNotBlank() }), Status.Kind.Ok))
     }
 
     /** 恢复「不转换格式」，直接显示基准原文。 */
     fun clearLyricFormat() {
         lyricFormatChoice = null
         rerenderLyrics()
-        postStatus(Status("格式：原始（不做转换）", Status.Kind.Ok))
+        postStatus(Status(L10n.t("status.formatRaw"), Status.Kind.Ok))
     }
 
     /**
@@ -1122,19 +1123,19 @@ object Repo {
      */
     fun shiftLyrics(deltaMs: Int) {
         if (lyricBase.isBlank()) {
-            postStatus(Status("没有歌词可偏移", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.noLyricsOffset"), Status.Kind.Warn))
             return
         }
         lyricOffsetMs += deltaMs
         rerenderLyrics()
-        postStatus(Status("偏移：$lyricOffsetMs ms", Status.Kind.Ok))
+        postStatus(Status(L10n.t("status.offset", lyricOffsetMs.toString() + " ms"), Status.Kind.Ok))
     }
 
     /** 把偏移量直接设为 0（等价于没偏移过）。 */
     fun resetLyricOffset() {
         lyricOffsetMs = 0
         rerenderLyrics()
-        postStatus(Status("偏移：0 ms", Status.Kind.Ok))
+        postStatus(Status(L10n.t("status.offsetZero"), Status.Kind.Ok))
     }
 
     /**
@@ -1145,19 +1146,19 @@ object Repo {
      */
     fun convertLyricsChinese(traditional: Boolean) {
         if (lyricBase.isBlank()) {
-            postStatus(Status("没有歌词可转换", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.noLyrics"), Status.Kind.Warn))
             return
         }
         val converted = ChineseText.convert(lyricBase, traditional)
         if (converted == lyricBase) {
-            postStatus(Status("没有需要转换的汉字", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.noHanToConvert"), Status.Kind.Warn))
             return
         }
         lyricBase = converted
         rerenderLyrics()
         postStatus(
             Status(
-                text = if (traditional) "已转为繁体" else "已转为简体",
+                text = if (traditional) L10n.t("status2.toTraditional") else L10n.t("status2.toSimplified"),
                 kind = Status.Kind.Ok,
             ),
         )
@@ -1188,7 +1189,7 @@ object Repo {
         lyricShowTranslation = true
         lyricShowRomanization = false
         rerenderLyrics()
-        postStatus(Status("已恢复默认歌词设置", Status.Kind.Ok))
+        postStatus(Status(L10n.t("status.lyricsSettingsReset"), Status.Kind.Ok))
     }
 
     /** 按指定毫秒平移歌词里的所有时间戳。 */
@@ -1258,7 +1259,7 @@ object Repo {
     fun saveLyrics(): Tags.Result {
         val meta = focused()
         if (!meta.hasFile) {
-            return Tags.Result(false, "曲目没有可写文件").also {
+            return Tags.Result(false, L10n.t("status.noWritableFile")).also {
                 postStatus(Status(it.message, Status.Kind.Error))
             }
         }
@@ -1383,8 +1384,8 @@ object Repo {
                 val dim = Host.imageSize(stagedBytes)
                 CoverSlot(
                     type = PictureTypeStandard.ARTIST,
-                    label = "艺术家 ${index + 1}",
-                    description = "草稿",
+                    label = L10n.t("artist.slot", index + 1),
+                    description = L10n.t("status2.draft"),
                     mime = draft
                         ?.artistCovers
                         ?.get(index)
@@ -1449,7 +1450,7 @@ object Repo {
             val image = bytes?.let { Host.decodeImage(it) }
             withContext(Dispatchers.Main) {
                 if (bytes == null || image == null) {
-                    postStatus(Status("导入失败：不是可识别的图片", Status.Kind.Error))
+                    postStatus(Status(L10n.t("status.importNotImage"), Status.Kind.Error))
                     return@withContext
                 }
                 val candidate =
@@ -1457,7 +1458,7 @@ object Repo {
                         id = "import:${System.nanoTime()}",
                         bytes = bytes,
                         image = image,
-                        sourceLabel = "导入",
+                        sourceLabel = L10n.t("status2.importTag"),
                         width = image.width,
                         height = image.height,
                         pictureType =
@@ -1471,7 +1472,7 @@ object Repo {
                     artistCandidate = candidate
                     postStatus(
                         Status(
-                            "已勾选导入的图 ${image.width}×${image.height}，点「写入草稿」才会换预览",
+                            L10n.t("status2.importedHint", image.width, image.height),
                             Status.Kind.Busy,
                         ),
                     )
@@ -1479,14 +1480,14 @@ object Repo {
                     val meta = focused()
                     if (!meta.hasFile) {
                         // 导入会直接进草稿，没文件可写时不该留下悬空草稿
-                        postStatus(Status("曲目没有可写文件，未导入", Status.Kind.Error))
+                        postStatus(Status(L10n.t("status.noWritableFile"), Status.Kind.Error))
                         return@withContext
                     }
                     importedCovers = importedCovers + candidate
                     rebuildCandidates()
                     selectedCoverId = candidate.id
                     stageCoverFor(meta = meta, bytes = bytes, image = image)
-                    postStatus(Status("已导入并进草稿 ${image.width}×${image.height}，点保存才写文件", Status.Kind.Ok))
+                    postStatus(Status(L10n.t("status.imported", image.width, image.height), Status.Kind.Ok))
                 }
             }
         }
@@ -1504,15 +1505,15 @@ object Repo {
                 selectedCover?.bytes
             }
         if (bytes == null) {
-            postStatus(Status("没有可导出的图", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.noImageToExport"), Status.Kind.Warn))
             return false
         }
         return try {
             java.io.File(path).writeBytes(bytes)
-            postStatus(Status("已导出到 ${java.io.File(path).name}", Status.Kind.Ok))
+            postStatus(Status(L10n.t("status.exported", java.io.File(path).name), Status.Kind.Ok))
             true
         } catch (t: Throwable) {
-            postStatus(Status("导出失败：${t.message.orEmpty().take(40)}", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.exportFailed", t.message.orEmpty().take(40)), Status.Kind.Error))
             false
         }
     }
@@ -1531,10 +1532,10 @@ object Repo {
                 }
             val text =
                 when {
-                    tiles.any { it is CoverTile.Searching } -> "搜索中"
+                    tiles.any { it is CoverTile.Searching } -> L10n.t("source.searching")
                     else -> {
                         val count = tiles.count { it is CoverTile.Ready }
-                        if (count > 0) "$count 张" else "无"
+                        if (count > 0) L10n.t("source.imageCount", count) else L10n.t("source.none")
                     }
                 }
             src.label to text
@@ -1546,17 +1547,17 @@ object Repo {
         return aggregator.lyricSources().map { src ->
             val text =
                 when (state) {
-                    is LyricMatch.Searching -> "搜索中"
+                    is LyricMatch.Searching -> L10n.t("source.searching")
                     is LyricMatch.Done -> {
                         val group = state.groups.firstOrNull { it.sourceId == src.id }
                         when {
-                            group == null -> "无"
-                            group.failure != null -> "失败"
-                            group.items.isEmpty() -> "无"
-                            else -> "${group.items.size} 条"
+                            group == null -> L10n.t("source.none")
+                            group.failure != null -> L10n.t("shell.failed")
+                            group.items.isEmpty() -> L10n.t("source.none")
+                            else -> L10n.t("source.lyricCount", group.items.size)
                         }
                     }
-                    is LyricMatch.Failed -> "失败"
+                    is LyricMatch.Failed -> L10n.t("shell.failed")
                     LyricMatch.Idle -> "—"
                 }
             src.label to text
@@ -1576,10 +1577,10 @@ object Repo {
                 }
             val text =
                 when {
-                    tiles.any { it is CoverTile.Searching } -> "搜索中"
+                    tiles.any { it is CoverTile.Searching } -> L10n.t("source.searching")
                     else -> {
                         val count = tiles.count { it is CoverTile.Ready }
-                        if (count > 0) "$count 张" else "无"
+                        if (count > 0) L10n.t("source.imageCount", count) else L10n.t("source.none")
                     }
                 }
             src.label to text
@@ -1596,27 +1597,27 @@ object Repo {
         val meta = focused()
         val target =
             selectedCover
-                ?: return Tags.Result(false, "没有勾选的候选封面").also {
+                ?: return Tags.Result(false, L10n.t("status2.noCoverChecked")).also {
                     postStatus(Status(it.message, Status.Kind.Error))
                 }
         val bytes =
             target.bytes
-                ?: return Tags.Result(false, "候选封面没有数据").also {
+                ?: return Tags.Result(false, L10n.t("status2.coverNoData")).also {
                     postStatus(Status(it.message, Status.Kind.Error))
                 }
         if (!meta.hasFile) {
-            return Tags.Result(false, "曲目没有可写文件").also {
+            return Tags.Result(false, L10n.t("status.noWritableFile")).also {
                 postStatus(Status(it.message, Status.Kind.Error))
             }
         }
         stageCoverFor(meta, bytes, target.image)
         postStatus(
             Status(
-                "封面已进草稿（${target.origin}），点保存才写文件",
+                L10n.t("status2.coverStaged", target.origin),
                 Status.Kind.Ok,
             ),
         )
-        return Tags.Result(true, "已进草稿")
+        return Tags.Result(true, L10n.t("status2.staged"))
     }
 
     /**
@@ -1664,7 +1665,7 @@ object Repo {
     ): Tags.Result {
         val meta = focused()
         if (!meta.hasFile) {
-            val result = Tags.Result(false, "曲目没有可写文件")
+            val result = Tags.Result(false, L10n.t("status.noWritableFile"))
             postStatus(Status(result.message, Status.Kind.Error))
             return result
         }
@@ -1719,8 +1720,8 @@ object Repo {
         spectrumPath = meta.path
         val token = Epoch.nextSpectrum()
         if (!meta.hasFile) {
-            spectrogram = SpectrogramState.Failed("曲目没有可读文件")
-            spectrum = SpectrumState.Failed("曲目没有可读文件")
+            spectrogram = SpectrogramState.Failed(L10n.t("common.noFile"))
+            spectrum = SpectrumState.Failed(L10n.t("common.noFile"))
             return
         }
         Spectrogram.cancel()
@@ -1746,7 +1747,7 @@ object Repo {
                                 )
                             spectrum =
                                 SpectrumState.Partial(
-                                    channels = listOf(SpectrumChannel("包络", result.envelope)),
+                                    channels = listOf(SpectrumChannel(L10n.t("status2.envelope"), result.envelope)),
                                     progress = result.progress,
                                 )
                         }
@@ -1759,7 +1760,7 @@ object Repo {
                         postOnMain {
                             if (!Epoch.spectrumAlive(token)) return@postOnMain
                             if (result == null) {
-                                spectrogram = SpectrogramState.Failed("已取消")
+                                spectrogram = SpectrogramState.Failed(L10n.t("status2.cancelled"))
                                 return@postOnMain
                             }
                             spectrogram =
@@ -1771,7 +1772,7 @@ object Repo {
                                 )
                             spectrum =
                                 SpectrumState.Ready(
-                                    channels = listOf(SpectrumChannel("包络", result.envelope)),
+                                    channels = listOf(SpectrumChannel(L10n.t("status2.envelope"), result.envelope)),
                                     derived = false,
                                 )
                         }
@@ -1824,7 +1825,7 @@ object Repo {
     fun writeAlbumBatch(fields: List<Tags.Key>) {
         val source = focused()
         if (!source.isPresent) {
-            postStatus(Status("没有选中曲目", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.noTrackSelected"), Status.Kind.Error))
             return
         }
         val targets =
@@ -1835,11 +1836,11 @@ object Repo {
                         it.album.isNotBlank()
                 }.map { it.toBackendTrack() }
         if (targets.isEmpty()) {
-            postStatus(Status("没有同专辑的曲目可写", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.noAlbumTracks"), Status.Kind.Warn))
             return
         }
         batchReport = null
-        postStatus(Status("开始批量写入 ${targets.size} 首…", Status.Kind.Busy))
+        postStatus(Status(L10n.t("status.batchStart", targets.size), Status.Kind.Busy))
         batchWriter.start(
             tracks = targets,
             patchFor = { track ->
@@ -1864,7 +1865,7 @@ object Repo {
             batchReport = report
             postStatus(
                 Status(
-                    text = "批量写入：${report.summary}",
+                    text = L10n.t("status.batchSummary", report.summary),
                     kind =
                         if (report.ok) Status.Kind.Ok else Status.Kind.Warn,
                 ),
@@ -1875,7 +1876,7 @@ object Repo {
 
     fun cancelBatch() {
         batchWriter.cancel()
-        postStatus(Status("已取消批量写入", Status.Kind.Warn))
+        postStatus(Status(L10n.t("status.batchCancelled"), Status.Kind.Warn))
     }
 
     private fun TrackMeta.toBackendTrack(): Track =
@@ -2000,7 +2001,7 @@ object Repo {
     fun measureReplayGain() {
         val meta = focused()
         if (!meta.hasFile) {
-            postStatus(Status("没有可测量的曲目", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.noTrackToMeasure"), Status.Kind.Warn))
             return
         }
         if (replayGainState is GainState.Measuring) return
@@ -2008,7 +2009,7 @@ object Repo {
         val key = meta.key
         replayGainMeasured = null
         replayGainState = GainState.Measuring(0f)
-        postStatus(Status("正在测量响度：${meta.title.ifBlank { meta.path.substringAfterLast('\\') }}…", Status.Kind.Busy))
+        postStatus(Status(L10n.t("status.measuring", meta.title.ifBlank { meta.path.substringAfterLast('\\') }), Status.Kind.Busy))
 
         scope.launch {
             val scan =
@@ -2023,13 +2024,13 @@ object Repo {
                     replayGainState = GainState.Measured(scan)
                     postStatus(
                         Status(
-                            "响度 ${"%.2f".format(scan.integratedLufs)} LUFS，增益 ${scan.gainText()}（未写入）",
+                            L10n.t("status2.loudness", "%.2f".format(scan.integratedLufs), scan.gainText()),
                             Status.Kind.Ok,
                         ),
                     )
                 } else {
                     replayGainState = GainState.Failed(scan.error.orEmpty())
-                    postStatus(Status("测量失败：${scan.error}", Status.Kind.Error))
+                    postStatus(Status(L10n.t("status.measureFailed", scan.error), Status.Kind.Error))
                 }
             }
         }
@@ -2040,11 +2041,11 @@ object Repo {
         val meta = focused()
         val scan = replayGainMeasured
         if (scan == null || !scan.ok) {
-            postStatus(Status("先测量再写入", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.measureFirst"), Status.Kind.Warn))
             return
         }
         if (!meta.hasFile) {
-            postStatus(Status("曲目没有可写文件", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.noWritableFile"), Status.Kind.Error))
             return
         }
         val key = meta.key
@@ -2083,7 +2084,7 @@ object Repo {
     fun clearReplayGainTag() {
         val meta = focused()
         if (!meta.hasFile) {
-            postStatus(Status("曲目没有可写文件", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.noWritableFile"), Status.Kind.Error))
             return
         }
         val key = meta.key
@@ -2237,7 +2238,7 @@ object Repo {
                 // 不再默认选中第一张：候选要用户自己挑，避免误写
                 val ready = networkArtistCovers.filterIsInstance<CoverTile.Ready>()
                 if (ready.isEmpty()) {
-                    postStatus(Status("各源都没有可用的艺术家图", Status.Kind.Warn))
+                    postStatus(Status(L10n.t("status.noArtistResults"), Status.Kind.Warn))
                 }
             }
         }
@@ -2247,7 +2248,7 @@ object Repo {
     fun chooseArtistCover(candidate: CoverCandidate) {
         artistCandidate = candidate
         // **只改勾选，不动预览**：左栏与主视图两个小槽要等 [applyArtistCover] 才换
-        postStatus(Status("已勾选 ${candidate.origin} ${candidate.info}", Status.Kind.Busy))
+        postStatus(Status(L10n.t("status.candidateChecked", candidate.origin, candidate.info), Status.Kind.Busy))
     }
 
     /**
@@ -2261,12 +2262,12 @@ object Repo {
         val meta = focused()
         val chosen =
             artistCandidate
-                ?: return Tags.Result(false, "没有选中的艺术家图").also {
+                ?: return Tags.Result(false, L10n.t("status2.noArtistPicked")).also {
                     postStatus(Status(it.message, Status.Kind.Error))
                 }
         val bytes =
             chosen.bytes
-                ?: return Tags.Result(false, "艺术家图数据为空").also {
+                ?: return Tags.Result(false, L10n.t("err.artistCoverEmpty")).also {
                     postStatus(Status(it.message, Status.Kind.Error))
                 }
         val slot = artistSlotIndex
@@ -2274,11 +2275,11 @@ object Repo {
         stageArtistPreview(meta, chosen, bytes)
         postStatus(
             Status(
-                "艺术家图 ${slot + 1} 已进草稿（${chosen.origin}），点保存才写文件",
+                L10n.t("status2.artistStaged", slot + 1, chosen.origin),
                 Status.Kind.Ok,
             ),
         )
-        return Tags.Result(true, "已进草稿")
+        return Tags.Result(true, L10n.t("status2.staged"))
     }
 
     /**
@@ -2322,7 +2323,7 @@ object Repo {
         val index = artistSlotIndex
         return CoverSlot(
             type = PictureTypeStandard.ARTIST,
-            label = "艺术家 ${index + 1}",
+            label = L10n.t("artist.slot", index + 1),
             description = chosen.origin,
             mime = "",
             bytes = chosen.bytes?.size ?: 0,
@@ -2336,7 +2337,7 @@ object Repo {
     fun searchOnline() {
         val meta = focused()
         if (!meta.isPresent) {
-            postStatus(Status("没有选中曲目", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.noTrackSelected"), Status.Kind.Error))
             return
         }
         val token = Epoch.nextOnline()
@@ -2370,15 +2371,14 @@ object Repo {
                 postStatus(
                     Status(
                         text =
-                            "在线匹配：${result.candidates.size} 个候选" +
+                            L10n.t("status2.onlineCandidates", result.candidates.size) +
                                 if (result.failures.isNotEmpty()) {
-                                    "，${result.failures.size} 个源失败（${result.failures.first().first}: ${result.failures.first().second.take(
-                                        24,
-                                    )}）"
+                                    val first = result.failures.first()
+                                    L10n.t("status2.onlineFailures", result.failures.size, first.first, first.second.take(24))
                                 } else {
                                     ""
                                 } +
-                                if (weak > 0) "，$weak 个需确认" else "",
+                                if (weak > 0) L10n.t("status2.weakConfirm", weak) else "",
                         kind =
                             if (result.candidates.isEmpty()) Status.Kind.Warn else Status.Kind.Ok,
                     ),
@@ -2395,7 +2395,7 @@ object Repo {
         if (ranked.candidate.title.isNotBlank()) Drafts.stageField(key, TagField.Title, ranked.candidate.title)
         if (ranked.candidate.artist.isNotBlank()) Drafts.stageField(key, TagField.Artist, ranked.candidate.artist)
         if (ranked.candidate.album.isNotBlank()) Drafts.stageField(key, TagField.Album, ranked.candidate.album)
-        postStatus(Status("已把「${ranked.candidate.display}」写入待保存", Status.Kind.Busy))
+        postStatus(Status(L10n.t("status.candidateApplied", ranked.candidate.display), Status.Kind.Busy))
     }
 
     /**     * 取候选的在线歌词。     *     * 回退链是显式的：     * 1. 候选自身的源（同源优先，避免拿 A 源候选去 B 源要歌词）     * 2. 其余有歌词能力的源，按权重从高到低     * 3. 都没有 → 明确提示"无歌词"，不静默     */
@@ -2447,7 +2447,12 @@ object Repo {
             withContext(Dispatchers.Main) {
                 if (!Epoch.onlineAlive(token)) return@withContext
                 if (text.isNullOrBlank()) {
-                    postStatus(Status("该候选没有可用歌词（已问过 ${sources.count { it.supports(Capability.LYRICAL) }} 个歌词源）", Status.Kind.Warn))
+                    postStatus(
+                        Status(
+                            L10n.t("status.candidateNoLyricsCount", sources.count { it.supports(Capability.LYRICAL) }),
+                            Status.Kind.Warn,
+                        ),
+                    )
                     return@withContext
                 }
                 Drafts.stageLyrics(meta.key, text)
@@ -2461,8 +2466,8 @@ object Repo {
                 lyricBase = text
                 lyricText = text
                 lyricsEpoch++
-                lyricSource = "在线 · ${label ?: "未知源"}"
-                postStatus(Status("在线歌词已加载（来源：${label ?: "未知"}），保存后写入", Status.Kind.Ok))
+                lyricSource = L10n.t("status2.onlineSource", label ?: L10n.t("status2.unknownSource"))
+                postStatus(Status(L10n.t("status.onlineLyricsLoaded", label ?: L10n.t("status.unknown")), Status.Kind.Ok))
             }
         }
     }
@@ -2622,7 +2627,7 @@ object Repo {
                 postStatus(
                     Status(
                         text =
-                            if (ready.isEmpty()) "所有来源均无可用封面" else "网络封面：${ready.size} 张",
+                            if (ready.isEmpty()) L10n.t("status2.coversNone") else L10n.t("status2.coversFound", ready.size),
                         kind =
                             if (ready.isEmpty()) Status.Kind.Warn else Status.Kind.Ok,
                     ),
@@ -2675,11 +2680,11 @@ object Repo {
     fun matchSelected() {
         val keys = Selection.checkedKeys
         if (keys.isEmpty()) {
-            postStatus(Status("先勾选要匹配的曲目", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.pickTracksFirst"), Status.Kind.Warn))
             return
         }
         val token = Epoch.nextOnline()
-        postStatus(Status("批量匹配 ${keys.size} 首…", Status.Kind.Busy))
+        postStatus(Status(L10n.t("status.matchBatchStart", keys.size), Status.Kind.Busy))
         scope.launch {
             val released = HostBridge.releaseAudioEngine()
             Diag.log("match-batch: releaseAudioEngine=$released tracks=${keys.size}")
@@ -2710,7 +2715,7 @@ object Repo {
                                     ?: return@withPermit
                             if (!meta.hasFile) {
                                 failCount.incrementAndGet()
-                                failures += "${meta.title.ifBlank { key }}：没有可写文件"
+                                failures += L10n.t("status.fileNoWritable", meta.title.ifBlank { key })
                                 return@withPermit
                             }
                             // 已有完整标签且策略是「仅补缺失」时整首跳过，省掉搜索与下载
@@ -2737,13 +2742,24 @@ object Repo {
                                     // 失败保留勾选，方便重试
                                     failCount.incrementAndGet()
                                     Selection.applyMatchResult(key, SelectReason.MatchFailed)
-                                    failures += "${meta.title.ifBlank { key }}：${outcome?.message ?: "匹配失败"}"
+                                    failures +=
+                                        L10n.t(
+                                            "status.matchFailedWith",
+                                            meta.title.ifBlank { key },
+                                            outcome?.message ?: L10n.t("status.matchFailed"),
+                                        )
                                 }
                                 // 进度合并刷新：不逐条改状态，只更新一行文本，避免 N 次重组
                                 postStatus(
                                     Status(
-                                        "批量匹配 ${doneCount.get()}/$total" +
-                                            "（成功 ${okCount.get()} 跳过 ${skipCount.get()} 失败 ${failCount.get()}）",
+                                        L10n.t(
+                                            "status2.batchProgress",
+                                            doneCount.get(),
+                                            total,
+                                            okCount.get(),
+                                            skipCount.get(),
+                                            failCount.get(),
+                                        ),
                                         Status.Kind.Busy,
                                     ),
                                 )
@@ -2760,9 +2776,9 @@ object Repo {
                 if (!Epoch.onlineAlive(token)) return@withContext
                 val msg =
                     buildString {
-                        append("批量匹配完成：成功 $ok")
-                        if (skipped > 0) append("，跳过完整标签 $skipped")
-                        if (failCount.get() > 0) append("，失败 ${failCount.get()}")
+                        append(L10n.t("status2.batchDone", ok))
+                        if (skipped > 0) append(L10n.t("status2.batchSkipped", skipped))
+                        if (failCount.get() > 0) append(L10n.t("status2.failedSuffix", failCount.get()))
                     }
                 failures.take(5).forEach { Diag.log("match-batch fail: $it") }
                 postStatus(Status(msg, if (failCount.get() == 0) Status.Kind.Ok else Status.Kind.Warn))
@@ -2778,15 +2794,15 @@ object Repo {
     fun matchCurrent() {
         val meta = focused()
         if (!meta.isPresent) {
-            postStatus(Status("没有选中曲目", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.noTrackSelected"), Status.Kind.Error))
             return
         }
         if (!meta.hasFile) {
-            postStatus(Status("这首没有可写文件", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.thisNoWritable"), Status.Kind.Error))
             return
         }
         val token = Epoch.nextOnline()
-        postStatus(Status("匹配当前：${meta.title.ifBlank { "未命名" }}…", Status.Kind.Busy))
+        postStatus(Status(L10n.t("status.matchCurrentStart", meta.title.ifBlank { L10n.t("status.unnamed") }), Status.Kind.Busy))
         scope.launch {
             val released = HostBridge.releaseAudioEngine()
             Diag.log("match-current: releaseAudioEngine=$released track=${meta.key.take(12)}")
@@ -2801,9 +2817,9 @@ object Repo {
                 postStatus(
                     Status(
                         text = when {
-                            outcome == null -> "匹配当前失败"
-                            outcome.ok -> "已匹配并写入：${meta.title.ifBlank { "未命名" }}"
-                            else -> "匹配当前失败：${outcome.message}"
+                            outcome == null -> L10n.t("status2.matchCurrentFailed")
+                            outcome.ok -> L10n.t("status2.matched", meta.title.ifBlank { L10n.t("status.unnamed") })
+                            else -> L10n.t("status2.matchCurrentFailedWith", outcome.message)
                         },
                         kind = if (outcome?.ok == true) Status.Kind.Ok else Status.Kind.Warn,
                     ),
@@ -2831,7 +2847,7 @@ object Repo {
         // 写进伴奏文件的真实风险。
         if (Matching.isInstrumental(meta.title, meta.album, meta.path.substringAfterLast('\\'))) {
             Diag.log("match-skip: ${meta.title} 标记为纯音乐/伴奏，未请求任何源")
-            return WriteOutcome.failure(meta.path, "纯音乐/伴奏，按策略跳过（避免误配演唱版）")
+            return WriteOutcome.failure(meta.path, L10n.t("status2.instrumental"))
         }
 
         val result = aggregator.search(query = query, capability = Capability.META)
@@ -2842,10 +2858,10 @@ object Repo {
             // 是标题对不上？艺术家不同？还是时长差太多？
             val reason =
                 if (result.failures.isNotEmpty() && result.queried == result.failures.size) {
-                    "来源请求失败：" + result.failures.joinToString("、") { "${it.first}(${it.second})" }
+                    L10n.t("status2.sourcesFailed", result.failures.joinToString(", ") { "${it.first}(${it.second})" })
                 } else {
-                    "没有匹配到候选（标题「${meta.title}」/ 艺术家「${meta.artist}」" +
-                        "/ 时长 ${meta.durationMs / 1000}s 均未通过校验）"
+                    L10n.t("status2.noCandidates", meta.title, meta.artist, meta.durationMs / 1000)
+                    ""
                 }
             return WriteOutcome.failure(meta.path, reason)
         }
@@ -2866,7 +2882,7 @@ object Repo {
                     .thenBy { durationGap(it.candidate.durationMs, query.durationMs) }
                     .thenByDescending { it.candidate.hasLyrics }
                     .thenByDescending { it.candidate.hasCover },
-            ) ?: return WriteOutcome.failure(meta.path, "候选均未通过校验")
+            ) ?: return WriteOutcome.failure(meta.path, L10n.t("status2.noCandidatePassed"))
 
         val cand = best.candidate
         // 等级 4（仅相似度达标）在无人复核的批量里风险偏高，记日志便于事后排查
@@ -3085,7 +3101,7 @@ object Repo {
     fun searchLyrics() {
         val meta = focused()
         if (!meta.isPresent) {
-            postStatus(Status("没有选中曲目", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.noTrackSelected"), Status.Kind.Error))
             return
         }
         val token = Epoch.nextOnline()
@@ -3108,7 +3124,7 @@ object Repo {
                     val total = snapshot.sumOf { it.items.size }
                     postStatus(
                         Status(
-                            "歌词候选：$total 条 / ${snapshot.size} 个源…",
+                            L10n.t("status2.lyricsCandidates", total, snapshot.size),
                             Status.Kind.Busy,
                         ),
                     )
@@ -3129,8 +3145,8 @@ object Repo {
                 postStatus(
                     Status(
                         text =
-                            "歌词候选：$total 条 / ${groups.size} 个源" +
-                                if (failed.isNotEmpty()) "，${failed.size} 个源失败" else "",
+                            L10n.t("status2.lyricsCandidatesDone", total, groups.size) +
+                                if (failed.isNotEmpty()) L10n.t("status2.sourcesFailedSuffix", failed.size) else "",
                         kind =
                             if (total == 0) Status.Kind.Warn else Status.Kind.Ok,
                     ),
@@ -3170,7 +3186,7 @@ object Repo {
             withContext(Dispatchers.Main) {
                 if (!Epoch.onlineAlive(token)) return@withContext
                 if (text.isNullOrBlank()) {
-                    postStatus(Status("该候选没有可用歌词", Status.Kind.Warn))
+                    postStatus(Status(L10n.t("status.candidateNoLyrics"), Status.Kind.Warn))
                     return@withContext
                 }
                 Drafts.stageLyrics(meta.key, text)
@@ -3181,10 +3197,10 @@ object Repo {
                 lyricBase = text
                 lyricText = text
                 lyricsEpoch++
-                lyricSource = "在线 · ${label ?: "未知源"}"
+                lyricSource = L10n.t("status2.onlineSource", label ?: L10n.t("status2.unknownSource"))
                 postStatus(
                     Status(
-                        text = "歌词已载入（来源：${label ?: "未知"}），${parsed.size} 行",
+                        text = L10n.t("status2.lyricsLoaded", label ?: L10n.t("status.unknown"), parsed.size),
                         kind = Status.Kind.Ok,
                     ),
                 )
@@ -3204,7 +3220,7 @@ object Repo {
     fun saveLyricsToDraft() {
         val meta = focused()
         if (!meta.isPresent) {
-            postStatus(Status("没有选中曲目", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.noTrackSelected"), Status.Kind.Error))
             return
         }
         // 源文本优先：它就是文件里该有的内容
@@ -3213,11 +3229,11 @@ object Repo {
                 editedLines.ifEmpty { lines }.joinToString("\n") { it.text }
             }
         if (text.isBlank()) {
-            postStatus(Status("歌词为空，未写入草稿", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.lyricsEmptyNotStaged"), Status.Kind.Warn))
             return
         }
         Drafts.stageLyrics(meta.key, text)
-        postStatus(Status("歌词已加入草稿，保存后写入", Status.Kind.Ok))
+        postStatus(Status(L10n.t("status.lyricsStaged"), Status.Kind.Ok))
     }
     // ── 草稿（预览制） ───────────────────────────────────────────────────────
 
@@ -3228,7 +3244,7 @@ object Repo {
     ) {
         val meta = focused()
         if (!meta.isPresent) {
-            postStatus(Status("没有选中曲目", Status.Kind.Error))
+            postStatus(Status(L10n.t("status.noTrackSelected"), Status.Kind.Error))
             return
         }
         Drafts.stageField(meta.key, key.field, value)
@@ -3236,9 +3252,9 @@ object Repo {
             Status(
                 text =
                     if (Drafts.dirtyCount > 0) {
-                        "已加入待保存（${Drafts.dirtyCount} 首有变更）"
+                        L10n.t("status2.addedToDraft", Drafts.dirtyCount)
                     } else {
-                        "已撤销该变更"
+                        L10n.t("status2.reverted")
                     },
                 kind = Status.Kind.Busy,
             ),
@@ -3254,18 +3270,18 @@ object Repo {
     /** 全部放弃。 */
     fun discardAllDrafts() {
         Drafts.clear()
-        postStatus(Status("已放弃全部未保存变更", Status.Kind.Warn))
+        postStatus(Status(L10n.t("status.discardAll"), Status.Kind.Warn))
     }
 
     /**     * 保存全部草稿。     *     * 顺序固定：释放音频引擎 → 逐个写文件 → 刷新音乐库 → 重载当前播放歌词 → 清草稿。     * 单首失败不中断，失败的保留脏标记供重试。     */
     fun saveDrafts() {
         val keys = Drafts.dirtyKeys
         if (keys.isEmpty()) {
-            postStatus(Status("没有待保存的变更", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.nothingToSave"), Status.Kind.Warn))
             return
         }
         val token = Epoch.nextSave()
-        postStatus(Status("保存中：${keys.size} 首…", Status.Kind.Busy))
+        postStatus(Status(L10n.t("status.saving", keys.size), Status.Kind.Busy))
         scope.launch {
             // 1. 释放音频引擎
             val released = HostBridge.releaseAudioEngine()
@@ -3281,11 +3297,11 @@ object Repo {
                         ?: track.takeIf { it.key == key }
                 )
                 if (meta == null) {
-                    failures += "$key：找不到曲目"
+                    failures += L10n.t("status.trackNotFound", key)
                     continue
                 }
                 if (!meta.hasFile) {
-                    failures += "${meta.title.ifBlank { key }}：没有可写文件"
+                    failures += L10n.t("status.fileNoWritable", meta.title.ifBlank { key })
                     continue
                 }
                 val draft = Drafts.draftFor(key)
@@ -3357,7 +3373,7 @@ object Repo {
                             refreshHost = false,
                         )
                     } else {
-                        WriteOutcome(path = backend.path, ok = true, message = "无变更")
+                        WriteOutcome(path = backend.path, ok = true, message = L10n.t("status.noChange"))
                     }
                 if (outcome.ok) {
                     ok++
@@ -3387,8 +3403,8 @@ object Repo {
                     Status(
                         text =
                             buildString {
-                                append("保存完成：成功 $ok / ${keys.size}")
-                                if (failures.isNotEmpty()) append("，失败 ${failures.size}")
+                                append(L10n.t("status.saveDone", ok, keys.size))
+                                if (failures.isNotEmpty()) append(", failed ${failures.size}")
                             },
                         kind =
                             if (failures.isEmpty()) Status.Kind.Ok else Status.Kind.Warn,
@@ -3400,7 +3416,7 @@ object Repo {
     }
 
     /** 顶栏的联网状态短标签。 */
-    fun netLabel(): String = if (io.github.univers629.spwtagworkbench.backend.net.NetProbe.offline) "离线" else ""
+    fun netLabel(): String = if (io.github.univers629.spwtagworkbench.backend.net.NetProbe.offline) L10n.t("status2.offline") else ""
 
     /** 最近一次保存的失败明细，UI 直接展示。 */
     var lastSaveFailures by mutableStateOf<List<String>>(emptyList())
@@ -3527,10 +3543,10 @@ object Repo {
     /** 宿主播放状态文本，供状态灯使用。 */
     fun hostSyncLabel(): String =
         when {
-            !focused().isPresent -> "未选择曲目"
-            !track.isPresent -> "宿主未播放"
-            hostSynced -> "已同步"
-            else -> "未同步"
+            !focused().isPresent -> L10n.t("status.notSelected")
+            !track.isPresent -> L10n.t("status2.hostNotPlaying")
+            hostSynced -> L10n.t("status2.synced")
+            else -> L10n.t("status2.unsynced")
         }
 
     /**
@@ -3546,7 +3562,7 @@ object Repo {
     fun switchHostToFocused(): Boolean {
         val focus = focused()
         if (!focus.isPresent) {
-            postStatus(Status("未选择曲目", Status.Kind.Warn))
+            postStatus(Status(L10n.t("status.notSelected"), Status.Kind.Warn))
             return false
         }
         val ok =
@@ -3562,7 +3578,7 @@ object Repo {
             }.getOrDefault(false)
         if (ok) {
             Diag.log("host: 已请求切歌 id=${focus.id}")
-            postStatus(Status("已让宿主切到本曲", Status.Kind.Ok))
+            postStatus(Status(L10n.t("status.switchedToTrack"), Status.Kind.Ok))
         } else {
             Diag.log("host: 切歌失败，见上方 play-track 日志")
             postStatus(

@@ -51,6 +51,7 @@ import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
 import io.github.univers629.spwtagworkbench.core.fmtTime
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.core.sourceDoneFraction
 import io.github.univers629.spwtagworkbench.data.LyricMatch
 import io.github.univers629.spwtagworkbench.data.Repo
@@ -77,17 +78,17 @@ fun LyricsPage(interactive: Boolean) {
 
     DetailScaffold(
         page = SpacePage.Lyrics,
-        label = "歌词",
+        label = L10n.t("lyrics.title"),
         interactive = interactive,
         progress = sourceDoneFraction(Repo.lyricSourceStates()),
         actions = {
             TapChip(
-                label = if (Repo.lyricMatch is LyricMatch.Searching) "搜索中…" else "重新搜索",
+                label = if (Repo.lyricMatch is LyricMatch.Searching) L10n.t("lyrics.searching") else L10n.t("lyrics.searchAgain"),
                 onClick = { Repo.searchLyrics() },
                 enabled = interactive,
             )
             TapChip(
-                label = "写入草稿",
+                label = L10n.t("action.writeDraft"),
                 onClick = { Repo.saveLyricsToDraft() },
                 enabled = interactive && lines.isNotEmpty() && Repo.focused().hasFile,
             )
@@ -113,7 +114,7 @@ fun LyricsPage(interactive: Boolean) {
                         modifier = Modifier.fillMaxWidth().height(50.dp).padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Txt("歌词候选", size = T.heading, color = palette.text, maxLines = 1)
+                        Txt(L10n.t("lyrics.candidates"), size = T.heading, color = palette.text, maxLines = 1)
                         Spacer(Modifier.weight(1f))
                         Txt(
                             text = Repo.lyricSource.ifBlank { "—" },
@@ -150,8 +151,8 @@ fun LyricsPage(interactive: Boolean) {
                         if (lines.isEmpty()) {
                             EmptyState(
                                 glyph = "♪",
-                                title = if (Repo.lyricsLoading) "正在读取歌词…" else "还没有歌词",
-                                hint = "左侧选一个在线候选，或点「读内嵌」",
+                                title = if (Repo.lyricsLoading) L10n.t("lyrics.loading") else L10n.t("lyrics.empty"),
+                                hint = L10n.t("lyrics.emptyHint"),
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {
@@ -170,17 +171,17 @@ private fun LyricCandidateList(interactive: Boolean) {
     when (val state = Repo.lyricMatch) {
         is LyricMatch.Idle ->
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Txt("进入本页会自动搜索", size = T.micro, color = palette.textTertiary, maxLines = 1)
+                Txt(L10n.t("lyrics.autoSearchHint"), size = T.micro, color = palette.textTertiary, maxLines = 1)
             }
 
         is LyricMatch.Searching ->
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Txt("多源并行搜索中…", size = T.caption, color = palette.textSecondary, maxLines = 1)
+                Txt(L10n.t("lyrics.multiSearching"), size = T.caption, color = palette.textSecondary, maxLines = 1)
             }
 
         is LyricMatch.Failed ->
             Column(Modifier.fillMaxSize().padding(14.dp)) {
-                Txt("搜索失败", size = T.caption, color = palette.error, maxLines = 1)
+                Txt(L10n.t("lyrics.searchFailed"), size = T.caption, color = palette.error, maxLines = 1)
                 Spacer(Modifier.height(4.dp))
                 Txt(state.reason, size = T.micro, color = palette.textTertiary, maxLines = 4)
             }
@@ -190,8 +191,8 @@ private fun LyricCandidateList(interactive: Boolean) {
             if (groups.all { it.items.isEmpty() }) {
                 EmptyState(
                     glyph = "♪",
-                    title = "没有匹配到歌词",
-                    hint = "五个源都没有可用结果",
+                    title = L10n.t("lyrics.noMatch"),
+                    hint = L10n.t("lyrics.noMatchHint"),
                     modifier = Modifier.fillMaxSize(),
                 )
             } else {
@@ -260,7 +261,7 @@ private fun CandidateRow(
     ) {
         Column(Modifier.weight(1f)) {
             Txt(
-                text = item.candidate.title.ifBlank { "未知标题" },
+                text = item.candidate.title.ifBlank { L10n.t("sidebar.unknownTitle") },
                 size = T.label,
                 color = palette.textSecondary,
                 maxLines = 1,
@@ -271,7 +272,7 @@ private fun CandidateRow(
                     buildString {
                         append(sourceLabel)
                         append(" · ")
-                        append(item.candidate.artist.ifBlank { "未知艺术家" })
+                        append(item.candidate.artist.ifBlank { L10n.t("sidebar.unknownArtist") })
                         if (item.candidate.album.isNotBlank()) append(" · ").append(item.candidate.album)
                     },
                 size = T.micro,
@@ -350,7 +351,7 @@ private fun SourceTextEditor(modifier: Modifier) {
                 Box {
                     if (text.isEmpty()) {
                         Txt(
-                            text = "左侧选一个在线候选，或点「读内嵌」",
+                            text = L10n.t("lyrics.emptyHint"),
                             size = T.body,
                             color = palette.textTertiary,
                             maxLines = 1,
@@ -390,16 +391,16 @@ private fun LyricSettingsPanel() {
         // 第一行：歌词格式下拉 + 偏移量
         // 偏移的「重置」不单独给按钮：把加减调到 0 就是归零，符合直觉。
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Txt("歌词格式", size = T.micro, color = palette.textTertiary, maxLines = 1)
+            Txt(L10n.t("lyrics.format"), size = T.micro, color = palette.textTertiary, maxLines = 1)
             Spacer(Modifier.width(6.dp))
             LyricFormatDropdown(
-                current = Repo.lyricFormatChoice ?: "原始",
+                current = Repo.lyricFormatChoice ?: L10n.t("lyrics.original"),
                 onPick = { pick ->
-                    if (pick == "原始") Repo.clearLyricFormat() else Repo.convertLyricFormat(pick)
+                    if (pick == L10n.t("lyrics.original")) Repo.clearLyricFormat() else Repo.convertLyricFormat(pick)
                 },
             )
             Spacer(Modifier.weight(1f))
-            Txt("偏移", size = T.micro, color = palette.textTertiary, maxLines = 1)
+            Txt(L10n.t("lyrics.offset"), size = T.micro, color = palette.textTertiary, maxLines = 1)
             Spacer(Modifier.width(6.dp))
             // 偏移量是「设置值」而不是对文本的累积修改，所以减到 0 就等于完全没偏移过。
             StepButton("−", enabled = Repo.lyricOffsetMs > -1000) { Repo.shiftLyrics(-100) }
@@ -416,18 +417,18 @@ private fun LyricSettingsPanel() {
         }
         // 第二行：简繁转换 + 语言轨道筛选（原文 / 译文 / 罗马音）
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Txt("简繁", size = T.micro, color = palette.textTertiary, maxLines = 1)
+            Txt(L10n.t("lyrics.script"), size = T.micro, color = palette.textTertiary, maxLines = 1)
             Spacer(Modifier.width(6.dp))
-            TapChip(label = "转简", onClick = { Repo.convertLyricsChinese(false) })
+            TapChip(label = L10n.t("lyrics.toSimplified"), onClick = { Repo.convertLyricsChinese(false) })
             Spacer(Modifier.width(4.dp))
-            TapChip(label = "转繁", onClick = { Repo.convertLyricsChinese(true) })
+            TapChip(label = L10n.t("lyrics.toTraditional"), onClick = { Repo.convertLyricsChinese(true) })
             Spacer(Modifier.weight(1f))
             // 语言轨道：同一时间戳的第 1/2/3 条依次是原文/译文/罗马音
-            LanguageToggle("原文", Repo.lyricShowOriginal) { Repo.setLyricLanguage(0, it) }
+            LanguageToggle(L10n.t("lyrics.sourceText"), Repo.lyricShowOriginal) { Repo.setLyricLanguage(0, it) }
             Spacer(Modifier.width(4.dp))
-            LanguageToggle("译文", Repo.lyricShowTranslation) { Repo.setLyricLanguage(1, it) }
+            LanguageToggle(L10n.t("lyrics.translation"), Repo.lyricShowTranslation) { Repo.setLyricLanguage(1, it) }
             Spacer(Modifier.width(4.dp))
-            LanguageToggle("罗马音", Repo.lyricShowRomanization) { Repo.setLyricLanguage(2, it) }
+            LanguageToggle(L10n.t("lyrics.romanization"), Repo.lyricShowRomanization) { Repo.setLyricLanguage(2, it) }
         }
     }
 }
@@ -494,11 +495,11 @@ private fun LyricFormatDropdown(
             MenuOptions(count = LYRIC_FORMATS.size + 1, maxRows = FORMAT_MENU_MAX_ROWS) {
                 item {
                     MenuRow(
-                        label = "原始",
-                        checked = current == "原始",
+                        label = L10n.t("lyrics.original"),
+                        checked = current == L10n.t("lyrics.original"),
                         onClick = {
                             open = false
-                            onPick("原始")
+                            onPick(L10n.t("lyrics.original"))
                         },
                     )
                 }

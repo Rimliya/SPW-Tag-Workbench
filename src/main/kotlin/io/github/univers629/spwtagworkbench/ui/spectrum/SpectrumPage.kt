@@ -35,6 +35,7 @@ import io.github.univers629.spwtagworkbench.core.Salt
 import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.data.Repo
 import io.github.univers629.spwtagworkbench.data.SpectrogramState
 import io.github.univers629.spwtagworkbench.router.SpacePage
@@ -71,7 +72,7 @@ fun SpectrumPage(interactive: Boolean) {
     }
     DetailScaffold(
         page = SpacePage.Spectrum,
-        label = "频谱",
+        label = L10n.t("spectrum.title"),
         interactive = interactive,
         // 进度走顶栏中间的蓝色进度条，不再用百分比文字
         progress =
@@ -84,7 +85,7 @@ fun SpectrumPage(interactive: Boolean) {
             when (state) {
                 is SpectrogramState.Working ->
                     TapChip(
-                        label = "取消",
+                        label = L10n.t("action.cancel"),
                         onClick = { Repo.cancelSpectrum() },
                         accent = palette.warn,
                         enabled = interactive,
@@ -92,13 +93,13 @@ fun SpectrumPage(interactive: Boolean) {
 
                 else ->
                     TapChip(
-                        label = if (state is SpectrogramState.Idle) "生成频谱" else "重新生成",
+                        label = if (state is SpectrogramState.Idle) L10n.t("spectrum.generate") else L10n.t("spectrum.regenerate"),
                         onClick = { Repo.analyze() },
                         enabled = interactive && Repo.focused().hasFile,
                     )
             }
             TapChip(
-                label = "重新测量响度",
+                label = L10n.t("spectrum.remeasure"),
                 onClick = { Repo.measureReplayGain() },
                 enabled = interactive && Repo.focused().hasFile && Repo.replayGainState !is Repo.GainState.Measuring,
             )
@@ -129,15 +130,15 @@ fun SpectrumPage(interactive: Boolean) {
                         if (state is SpectrogramState.Idle) {
                             EmptyState(
                                 glyph = "〜",
-                                title = if (Repo.focused().hasFile) "还没有生成频谱" else "曲目没有可读文件",
-                                hint = "点右上角生成：BASS 解码 → FFT → dB → 色表",
+                                title = if (Repo.focused().hasFile) L10n.t("spectrum.empty") else L10n.t("common.noFile"),
+                                hint = L10n.t("spectrum.emptyHint"),
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {
                             val reason = (state as? SpectrogramState.Failed)?.reason.orEmpty()
                             EmptyState(
                                 glyph = "✕",
-                                title = "频谱生成失败",
+                                title = L10n.t("spectrum.failed"),
                                 hint = reason,
                                 modifier = Modifier.fillMaxSize(),
                             )
@@ -172,7 +173,7 @@ private fun SpectrumImage(
     ) {
         Image(
             bitmap = image,
-            contentDescription = "频谱图",
+            contentDescription = L10n.t("spectrum.chart"),
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.fillMaxSize(),
         )
@@ -180,11 +181,11 @@ private fun SpectrumImage(
         // 声道标签：各自那一半的**顶部居中**（不再压左上角，避免与刻度抢位置）
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
-                ChannelLabel("L 左")
+                ChannelLabel(L10n.t("spectrum.left"))
             }
             if (displayChannels > 1) {
                 Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
-                    ChannelLabel("R 右")
+                    ChannelLabel(L10n.t("spectrum.right"))
                 }
             }
         }
@@ -340,7 +341,7 @@ private fun RibbonPlaceholder() {
                 .border(0.5.dp, palette.border, RoundedCornerShape(8.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        Txt("概览带生成中…", size = T.micro, color = palette.textTertiary, maxLines = 1)
+        Txt(L10n.t("spectrum.overviewGenerating"), size = T.micro, color = palette.textTertiary, maxLines = 1)
     }
 }
 
@@ -355,7 +356,7 @@ private fun Skeleton() {
                 .background(palette.card),
         contentAlignment = Alignment.Center,
     ) {
-        Txt("解码中…", size = T.caption, color = palette.textTertiary, maxLines = 1)
+        Txt(L10n.t("spectrum.decoding"), size = T.caption, color = palette.textTertiary, maxLines = 1)
     }
 }
 
@@ -384,23 +385,23 @@ private fun ReplayGainRow(interactive: Boolean) {
         modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Txt("回放增益", size = T.caption, color = pal.textTertiary, maxLines = 1)
+        Txt(L10n.t("spectrum.replayGain"), size = T.caption, color = pal.textTertiary, maxLines = 1)
         Spacer(Modifier.width(10.dp))
 
         // 值：优先显示文件里已有的（那是真实落盘值），其次显示刚测的
         val text =
             when {
                 existing.present -> {
-                    val peak = if (existing.trackPeak.isNotBlank()) "  峰值 ${existing.trackPeak}" else ""
-                    "${existing.trackGain}  ← 文件里已有$peak"
+                    val peak = if (existing.trackPeak.isNotBlank()) L10n.t("spectrum.peakSuffix", existing.trackPeak) else ""
+                    L10n.t("spectrum.existing", existing.trackGain, peak)
                 }
 
-                state is Repo.GainState.Measuring -> "测量中 ${(state.progress * 100).toInt()}%"
+                state is Repo.GainState.Measuring -> L10n.t("spectrum.measuring", (state.progress * 100).toInt())
                 measured != null && measured.ok ->
-                    "${measured.gainText()}  峰值 ${measured.peakText()}  ← 未写入"
+                    L10n.t("spectrum.measured", measured.gainText(), measured.peakText())
 
-                state is Repo.GainState.Failed -> "测量失败：${state.reason}"
-                !hasFile -> "曲目没有可读文件"
+                state is Repo.GainState.Failed -> L10n.t("spectrum.measureFailed", state.reason)
+                !hasFile -> L10n.t("common.noFile")
                 else -> "…"
             }
         val tone =
@@ -415,14 +416,14 @@ private fun ReplayGainRow(interactive: Boolean) {
 
         if (measured != null && measured.ok && !existing.present) {
             TapChip(
-                label = "写入",
+                label = L10n.t("spectrum.write"),
                 onClick = { Repo.applyMeasuredReplayGain() },
                 enabled = interactive && hasFile,
             )
         }
         if (existing.present) {
             TapChip(
-                label = "清除",
+                label = L10n.t("spectrum.clear"),
                 onClick = { Repo.clearReplayGainTag() },
                 enabled = interactive && hasFile,
             )

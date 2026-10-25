@@ -3,6 +3,8 @@
 
 package io.github.univers629.spwtagworkbench.backend.model
 
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
+
 /**
  * 统一曲目模型。
  *
@@ -262,8 +264,8 @@ data class BatchReport(
     val summary: String
         get() =
             buildString {
-                append("成功 $succeeded / $total")
-                if (failed.isNotEmpty()) append("，失败 ${failed.size}")
-                if (cancelled) append("，已取消")
+                append(L10n.t("status.batchOk", succeeded, total))
+                if (failed.isNotEmpty()) append(L10n.t("status.batchFailedSuffix", failed.size))
+                if (cancelled) append(L10n.t("status.batchCancelledSuffix"))
             }
 }

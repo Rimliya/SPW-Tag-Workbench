@@ -71,6 +71,7 @@ import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
 import io.github.univers629.spwtagworkbench.core.fabCard
 import io.github.univers629.spwtagworkbench.core.fabCardRaised
+import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.core.saltPalette
 import io.github.univers629.spwtagworkbench.data.Drafts
 import io.github.univers629.spwtagworkbench.data.Repo
@@ -401,7 +402,7 @@ private fun WideToolbar(
             // 原来那个只搜不写、结果无处可看，属于冗余。
             Box {
                 ToolButton(
-                    label = "标签源",
+                    label = L10n.t("shell.sourceGroup"),
                     trailing = "▾",
                     active = sourcesOpen,
                     onClick = onToggleSources,
@@ -411,33 +412,33 @@ private fun WideToolbar(
                     onDismiss = onToggleSources,
                 ) {
                     io.github.univers629.spwtagworkbench.core.MenuRow(
-                        label = "iTunes · 元数据 / 封面",
+                        label = "iTunes · " + L10n.t("shell.capMetaCover"),
                         checked = Settings.isSourceEnabled("itunes"),
                         onClick = { Settings.setSourceEnabled("itunes", !Settings.isSourceEnabled("itunes")) },
                     )
                     io.github.univers629.spwtagworkbench.core.MenuRow(
-                        label = "LRCLIB · 歌词 / 元数据",
+                        label = "LRCLIB · " + L10n.t("shell.capLyricsMeta"),
                         checked = Settings.isSourceEnabled("lrclib"),
                         onClick = { Settings.setSourceEnabled("lrclib", !Settings.isSourceEnabled("lrclib")) },
                     )
                     io.github.univers629.spwtagworkbench.core.MenuRow(
-                        label = "网易云 · 歌词 / 元数据",
+                        label = "网易云 · " + L10n.t("shell.capLyricsMeta"),
                         checked = Settings.isSourceEnabled("netease"),
                         onClick = { Settings.setSourceEnabled("netease", !Settings.isSourceEnabled("netease")) },
                     )
                     io.github.univers629.spwtagworkbench.core.MenuRow(
-                        label = "QQ音乐 · 歌词 / 元数据",
+                        label = "QQ音乐 · " + L10n.t("shell.capLyricsMeta"),
                         checked = Settings.isSourceEnabled("qqmusic"),
                         onClick = { Settings.setSourceEnabled("qqmusic", !Settings.isSourceEnabled("qqmusic")) },
                     )
                     io.github.univers629.spwtagworkbench.core.MenuRow(
-                        label = "酷狗音乐 · 歌词 / 元数据",
+                        label = "酷狗音乐 · " + L10n.t("shell.capLyricsMeta"),
                         checked = Settings.isSourceEnabled("kugou"),
                         onClick = { Settings.setSourceEnabled("kugou", !Settings.isSourceEnabled("kugou")) },
                     )
                     Spacer(Modifier.height(3.dp))
                     io.github.univers629.spwtagworkbench.core.MenuRow(
-                        label = "全部启用",
+                        label = L10n.t("shell.enableAll"),
                         showCheck = false,
                         accent = Salt.accent,
                         onClick = {
@@ -449,12 +450,12 @@ private fun WideToolbar(
                 }
             }
             ToolButton(
-                label = if (checked > 0) "匹配选中 $checked" else "匹配选中",
+                label = if (checked > 0) L10n.t("shell.matchSelectedCount", checked) else L10n.t("shell.matchSelected"),
                 onClick = { Repo.matchSelected() },
             )
             // 只处理当前这一首：与批量同理，直接写文件，不经过草稿预览
             ToolButton(
-                label = "匹配当前",
+                label = L10n.t("shell.matchCurrent"),
                 onClick = { Repo.matchCurrent() },
             )
             // 保存按钮**常驻**，不再依赖「有没有脏草稿」才出现。
@@ -467,7 +468,7 @@ private fun WideToolbar(
             // 改成常驻后：有改动时显示数量，没改动时按钮置灰（不能点），语义一样清楚，
             // 但不再需要任何检测逻辑参与「显不显示」这个决策。
             ToolButton(
-                label = if (dirty > 0) "保存 $dirty" else "保存",
+                label = if (dirty > 0) L10n.t("shell.saveCount", dirty) else L10n.t("shell.save"),
                 accent = if (dirty > 0) palette.accent else null,
                 onClick = { Repo.saveDrafts() },
                 enabled = dirty > 0,
@@ -591,19 +592,19 @@ private fun LogSheet(onDismiss: () -> Unit) {
         maxHeight = 560.dp,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Txt("诊断日志", size = T.heading, color = palette.text, maxLines = 1)
+            Txt(L10n.t("shell.diagnostics"), size = T.heading, color = palette.text, maxLines = 1)
             Spacer(Modifier.width(8.dp))
             Txt(
-                text = "${lines.size} 行 · ${Diag.path}",
+                text = L10n.t("shell.diagnosticsRows", lines.size, Diag.path),
                 size = T.caption,
                 color = palette.textTertiary,
                 maxLines = 1,
                 modifier = Modifier.weight(1f),
             )
-            TapChip(label = "刷新", onClick = { lines = Diag.tail() })
+            TapChip(label = L10n.t("shell.refresh"), onClick = { lines = Diag.tail() })
             Spacer(Modifier.width(8.dp))
             TapChip(
-                label = "清空",
+                label = L10n.t("shell.clear"),
                 accent = palette.warn,
                 onClick = {
                     Diag.clear()
@@ -611,10 +612,10 @@ private fun LogSheet(onDismiss: () -> Unit) {
                 },
             )
             Spacer(Modifier.width(8.dp))
-            TapChip(label = "关闭", onClick = onDismiss, accent = palette.accent)
+            TapChip(label = L10n.t("shell.close"), onClick = onDismiss, accent = palette.accent)
         }
         if (lines.isEmpty()) {
-            Txt("（日志为空）", size = T.caption, color = palette.textTertiary, maxLines = 1)
+            Txt(L10n.t("shell.logEmpty"), size = T.caption, color = palette.textTertiary, maxLines = 1)
         } else {
             Column(
                 modifier =
