@@ -20,7 +20,6 @@ import io.github.univers629.spwtagworkbench.core.i18n.L10n
 import io.github.univers629.spwtagworkbench.data.Drafts
 import io.github.univers629.spwtagworkbench.data.Repo
 import io.github.univers629.spwtagworkbench.router.ShellState
-import io.github.univers629.spwtagworkbench.router.SpacePage
 import io.github.univers629.spwtagworkbench.router.SpaceRouter
 import io.github.univers629.spwtagworkbench.ui.NoIndication
 import io.github.univers629.spwtagworkbench.ui.WideView
@@ -37,17 +36,32 @@ object EmbeddedWorkbenchRuntime {
     @Synchronized
     fun start(pluginId: String, pluginVersion: String, spwVersion: String, pluginPath: String) {
         if (started) return
-        PluginEnv.bind(pluginId)
-        L10n.install(HostLanguage.effectiveTag())
-        Settings.load()
-        Drafts.sweepImageDir()
-        Diag.session("embedded start v=$pluginVersion spw=$spwVersion path=$pluginPath")
-        Repo.bootstrap()
-        Repo.startPlaybackFollow()
-        SpaceRouter.hardReset()
+        try {
+            PluginEnv.bind(pluginId)
+            L10n.install(HostLanguage.effectiveTag())
+            Settings.load()
+            Drafts.sweepImageDir()
+            Diag.session("embedded start v=$pluginVersion spw=$spwVersion path=$pluginPath")
+            Repo.bootstrap()
+            Repo.startPlaybackFollow()
+            SpaceRouter.hardReset()
+            ShellState.progress = 1f
+            ShellState.open = true
+            started = true
+        } catch (error: Throwable) {
+            runCatching { Repo.shutdown() }
+            ShellState.reset()
+            SpaceRouter.hardReset()
+            started = false
+            throw error
+        }
+    }
+
+    /** Re-open the full workbench without resetting the page the user was last editing. */
+    fun ensureOpen() {
+        if (!started) return
         ShellState.progress = 1f
         ShellState.open = true
-        started = true
     }
 
     @Synchronized
@@ -73,6 +87,7 @@ object EmbeddedWorkbenchRuntime {
 fun EmbeddedWorkbenchContent(onClose: () -> Unit) {
     val palette = rememberHostPalette()
     LaunchedEffect(Unit) {
+        EmbeddedWorkbenchRuntime.ensureOpen()
         Settings.refresh()
     }
     DisposableEffect(Unit) { onDispose { ShellState.reset() } }
