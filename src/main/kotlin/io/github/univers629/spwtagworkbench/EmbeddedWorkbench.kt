@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import io.github.univers629.spwtagworkbench.core.Diag
@@ -42,6 +43,9 @@ object EmbeddedWorkbenchRuntime {
         Diag.session("embedded start v=$pluginVersion spw=$spwVersion path=$pluginPath")
         Repo.bootstrap()
         Repo.startPlaybackFollow()
+        SpaceRouter.hardReset()
+        ShellState.progress = 1f
+        ShellState.open = true
         started = true
     }
 
@@ -69,10 +73,8 @@ fun EmbeddedWorkbenchContent(onClose: () -> Unit) {
     val palette = rememberHostPalette()
     LaunchedEffect(Unit) {
         Settings.refresh()
-        SpaceRouter.hardReset()
-        ShellState.progress = 1f
-        ShellState.open = true
     }
+    DisposableEffect(Unit) { onDispose { ShellState.reset() } }
     CompositionLocalProvider(
         LocalPalette provides palette,
         androidx.compose.foundation.LocalIndication provides NoIndication,
