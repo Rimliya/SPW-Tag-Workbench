@@ -250,6 +250,8 @@ object Repo {
         private set
     var selected by mutableStateOf<TrackMeta?>(null)
         private set
+    /** Startup and normal playback changes follow the host; an explicit library click pins a track. */
+    private var followPlaying = true
     var libraryLoading by mutableStateOf(false)
         private set
 
@@ -799,9 +801,12 @@ object Repo {
                 // 停用场景不需要 token：shutdown 里 scope.cancel() 已把本协程取消。
                 if (result != null) {
                     library = result.map { it.toMeta() }
-                    if (selected == null) selected = library.firstOrNull()
                     // 曲库里没有时至少保留当前播放
                     if (library.isEmpty() && track.isPresent) library = listOf(track)
+                    if (selected == null) {
+                        val initial = track.takeIf { it.isPresent } ?: library.firstOrNull()
+                        if (initial != null) selectInternal(initial)
+                    }
                 } else {
                     postStatus(Status(L10n.t("status.libraryFailed"), Status.Kind.Error))
                 }
@@ -813,59 +818,49 @@ object Repo {
     fun onTrackChanged(item: PlaybackExtensionPoint.MediaItem) {
         val meta = item.toMeta()
         if (meta.key == track.key && track.isPresent) {
-            // 同一首歌刷新元数据（例如刚写完标签后宿主重读）。
-            //
-            // 宿主的 MediaItem 只带曲库字段；音轨号 / 作词 / 注释 / ReplayGain
-            // 这些只有文件里有的值必须先保留，否则侧栏这类直接读 [track] 的界面
-            // 会被这次覆盖清空。
-            track =
+            // The host snapshot has only database fields. Keep the richer file values that
+            // were already loaded, and only touch the focused item when it is this track.
+            val source = selected?.takeIf { it.key == meta.key } ?: track
+            val refreshed =
                 meta.copy(
-                    track = track.track,
-                    disc = track.disc,
-                    lyricist = track.lyricist,
-                    composer = track.composer,
-                    comment = track.comment,
-                    replayGainTrackGain = track.replayGainTrackGain,
-                    replayGainTrackPeak = track.replayGainTrackPeak,
-                    replayGainAlbumGain = track.replayGainAlbumGain,
-                    replayGainAlbumPeak = track.replayGainAlbumPeak,
+                    track = source.track,
+                    disc = source.disc,
+                    lyricist = source.lyricist,
+                    composer = source.composer,
+                    comment = source.comment,
+                    replayGainTrackGain = source.replayGainTrackGain,
+                    replayGainTrackPeak = source.replayGainTrackPeak,
+                    replayGainAlbumGain = source.replayGainAlbumGain,
+                    replayGainAlbumPeak = source.replayGainAlbumPeak,
                 )
+            track = refreshed
+            if (selected?.key == meta.key || (followPlaying && selected == null)) selected = refreshed
+            library = library.map { if (it.key == meta.key) refreshed else it }
             return
         }
-        Epoch.invalidateAll()
+
+        val previous = track
+        val wasFocusedOnPlaying = selected == null || selected?.key == previous.key
+        val shouldFollow = followPlaying || wasFocusedOnPlaying
         track = meta
         PlaybackSignal.currentId = meta.id
         PlaybackSignal.currentPath = meta.path
         positionMs = 0L
-        // 插值基准一并重置：否则新歌第一帧会用上一首的时间差外推
         rawPositionMs = 0L
         rawPositionNanos = System.nanoTime()
         hasPosition = false
         lastPublishedMs = -1L
         currentLine = -1
-        lines = emptyList()
-        editedLines = emptyList()
-        lyricBase = ""
-        lyricText = ""
-        lyricSource = ""
-        cover = null
-        clearCandidates()
-        spectrum = SpectrumState.Idle
-        // 艺术家候选同样属于上一首，不清会残留在新歌的封面上
-        artistCandidate = null
-        artistSlots = listOf(null, null)
-        networkCovers = emptyList()
-        networkArtistCovers = emptyList()
-        // 切歌：正在渲染的频谱作废，旧结果不能留在新歌上
-        Spectrogram.cancel()
-        spectrogram = SpectrogramState.Idle
-        if (selected == null || selected?.key == meta.key) selected = meta
-        loadLyrics(meta)
-        loadCovers(meta)
-        // 宿主 MediaItem 只带曲库字段，音轨号 / 碟号 / 作词 / 作曲 / 注释 / ReplayGain
-        // 只有文件里有。切歌后补读一次，否则元数据区这几行会一直是空的。
-        if (meta.hasFile) {
-            scope.launch { refreshFocusedFromDisk(meta, reloadContent = false) }
+
+        if (shouldFollow) {
+            followPlaying = true
+            selected = meta
+            showFocused(meta)
+        } else {
+            // Keep the user's pinned track and its editor contents. Only refresh the row for
+            // the newly playing track so the library still reflects the host.
+            library = library.map { if (it.key == meta.key) meta else it }
+            Diag.log("track: host changed to \"${meta.title}\" but pinned focus remains \"${selected?.title.orEmpty()}\"")
         }
     }
 
@@ -932,26 +927,34 @@ object Repo {
 
     /** 把编辑焦点对齐到正在播放的曲目（打开宽视图时用）。 */
     fun focusPlaying() {
+        followPlaying = true
         val playing = track
         if (playing.isPresent) {
-            select(playing)
-        } else {
-            if (selected == null) {
-                library.firstOrNull()?.let { select(it) }
-            }
+            selectInternal(playing)
+        } else if (selected == null) {
+            library.firstOrNull()?.let(::selectInternal)
         }
     }
 
+    /** A different library track pins focus; selecting the playing track resumes auto-follow. */
     fun select(meta: TrackMeta) {
+        followPlaying = meta.key == track.key
+        selectInternal(meta)
+    }
+
+    private fun selectInternal(meta: TrackMeta) {
         if (selected?.key == meta.key) {
-            // 同一首再次选中：宿主的 meta 可能缺文件独有字段（音轨号 / 作词 /
-            // 注释 / ReplayGain），补读一次，避免这几行停在空值上。
+            // Re-clicking the focused track refreshes the file-only fields in place.
             if (meta.hasFile) {
                 scope.launch { refreshFocusedFromDisk(meta, reloadContent = false) }
             }
             return
         }
         selected = meta
+        showFocused(meta)
+    }
+
+    private fun showFocused(meta: TrackMeta) {
         Epoch.invalidateAll()
         lines = emptyList()
         editedLines = emptyList()
@@ -961,32 +964,23 @@ object Repo {
         cover = null
         clearCandidates()
         spectrum = SpectrumState.Idle
-        // 测量结果与「文件里已有的增益」都属于上一首，不清会显示成新歌的
         replayGainMeasured = null
         replayGainState = GainState.Idle
         replayGainExisting = ReplayGainValues()
-        // 换了编辑对象就把播放游标清掉：
-        // 否则新歌第一帧会带着上一首的位置，谱轴播放头与行高亮都错位。
         positionMs = 0L
-        // 插值基准一并重置：否则新歌第一帧会用上一首的时间差外推
         rawPositionMs = 0L
         rawPositionNanos = System.nanoTime()
         hasPosition = false
         lastPublishedMs = -1L
         currentLine = -1
-        // 艺术家图与两套候选都属于「上一首」，不清会残留在新歌上：
-        // 新歌本地没艺术家图时，两个小槽会继续显示上一首选中的那张。
         artistCandidate = null
         artistSlots = listOf(null, null)
         networkCovers = emptyList()
         networkArtistCovers = emptyList()
-        // 切歌：正在渲染的频谱作废，旧结果不能留在新歌上
         Spectrogram.cancel()
         spectrogram = SpectrogramState.Idle
         loadLyrics(meta)
         loadCovers(meta)
-        // 宿主的曲库不带音轨号 / 碟号 / 作词 / 作曲 / 注释，这几个字段只有文件里有。
-        // 这里补读一次，否则编辑区那几行永远是空的（歌词与封面上面已经触发过，不重复读）。
         if (meta.hasFile) {
             scope.launch { refreshFocusedFromDisk(meta, reloadContent = false) }
         }
@@ -3049,7 +3043,19 @@ object Repo {
         reloadContent: Boolean = true,
     ) {
         if (!meta.hasFile) return
-        val fresh = runCatching { withContext(Dispatchers.IO) { Tags.read(meta.path) } }.getOrNull() ?: return
+        val fresh =
+            runCatching { withContext(Dispatchers.IO) { Tags.read(meta.path) } }
+                .onFailure { error ->
+                    Diag.log("tags: 读取失败 ${error.javaClass.simpleName} ${error.message.orEmpty().take(160)} path=${meta.path}")
+                }
+                .getOrNull()
+                ?: return
+        Diag.log(
+            "tags: ${meta.title.ifBlank { meta.path }} -> " +
+                "track=${fresh.track.ifBlank { "-" }} disc=${fresh.disc.ifBlank { "-" }} " +
+                "genre=${fresh.genre.ifBlank { "-" }} lyricist=${fresh.lyricist.ifBlank { "-" }} " +
+                "composer=${fresh.composer.ifBlank { "-" }}",
+        )
         // Tags.read 返回后端的 Track，镜像成界面用的 TrackMeta；id 沿用曲库里的那条
         val updated =
             TrackMeta(
