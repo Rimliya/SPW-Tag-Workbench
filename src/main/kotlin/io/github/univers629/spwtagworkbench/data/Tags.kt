@@ -44,6 +44,12 @@ object Tags {
         Composer("作曲家", TagField.Composer),
         Lyricist("作词家", TagField.Lyricist),
         Comment("注释", TagField.Comment),
+
+        // ReplayGain 2.0 的四个自由键：写入走 TXXX / 注释键，不是标准文本帧。
+        TrackGain("音轨增益", TagField.ReplayGainTrackGain),
+        TrackPeak("音轨峰值", TagField.ReplayGainTrackPeak),
+        AlbumGain("专辑增益", TagField.ReplayGainAlbumGain),
+        AlbumPeak("专辑峰值", TagField.ReplayGainAlbumPeak),
         ;
 
         companion object {
@@ -105,7 +111,7 @@ object Tags {
     ): Result {
         val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
         val outcome = AudioTagWriter.writeField(track, key.field, value, reloadLyricsForId)
-        return Result(outcome.ok, decorate(outcome.message, outcome.hostRefreshed))
+        return Result(outcome.ok, decorate(outcome.message, ok = outcome.ok, refreshed = outcome.hostRefreshed))
     }
 
     fun writeLyrics(
@@ -120,7 +126,7 @@ object Tags {
                 patch = TagPatch.single(TagField.Lyrics, lrcText),
                 reloadLyricsForId = reloadLyricsForId,
             )
-        return Result(outcome.ok, decorate(outcome.message, outcome.hostRefreshed))
+        return Result(outcome.ok, decorate(outcome.message, ok = outcome.ok, refreshed = outcome.hostRefreshed))
     }
 
     fun writeCover(
@@ -130,7 +136,7 @@ object Tags {
         val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
         val cover = CoverMime.asCover(bytes) ?: return Result(false, "封面数据为空")
         val outcome = AudioTagWriter.writeCover(track, cover)
-        return Result(outcome.ok, decorate(outcome.message, outcome.hostRefreshed))
+        return Result(outcome.ok, decorate(outcome.message, ok = outcome.ok, refreshed = outcome.hostRefreshed))
     }
 
     /**
@@ -146,7 +152,7 @@ object Tags {
         val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
         val cover = CoverMime.asCover(bytes) ?: return Result(false, "艺术家图数据为空")
         val outcome = AudioTagWriter.writeCover(track, cover, pictureType = 8)
-        return Result(outcome.ok, decorate(outcome.message, outcome.hostRefreshed))
+        return Result(outcome.ok, decorate(outcome.message, ok = outcome.ok, refreshed = outcome.hostRefreshed))
     }
 
     // ── ReplayGain ──────────────────────────────────────────────────────────
@@ -170,7 +176,7 @@ object Tags {
             patch.set(field, value)
         }
         val outcome = AudioTagWriter.write(track, patch, reloadLyricsForId = reloadLyricsForId)
-        return Result(outcome.ok, decorate(outcome.message, outcome.hostRefreshed))
+        return Result(outcome.ok, decorate(outcome.message, ok = outcome.ok, refreshed = outcome.hostRefreshed))
     }
 
     /** 清除四个 ReplayGain 键（写空值即删除）。 */
@@ -179,7 +185,7 @@ object Tags {
         val patch = TagPatch()
         for (field in TagField.replayGainFields) patch.set(field, "")
         val outcome = AudioTagWriter.write(track, patch)
-        return Result(outcome.ok, decorate(outcome.message, outcome.hostRefreshed))
+        return Result(outcome.ok, decorate(outcome.message, ok = outcome.ok, refreshed = outcome.hostRefreshed))
     }
 
     // ── 内部 ────────────────────────────────────────────────────────────────
@@ -191,8 +197,15 @@ object Tags {
         return Track(id = "", path = path)
     }
 
+    /**
+     * 写成功但宿主没回读时补一句提示。
+     *
+     * **只在成功时补**：失败信息（只读、容器异常…）后面接「宿主刷新未响应」
+     * 会被误读为刷新导致失败，日志里会混入两种原因。
+     */
     private fun decorate(
         message: String,
+        ok: Boolean,
         refreshed: Boolean,
-    ): String = if (refreshed) message else "$message（宿主刷新未响应）"
+    ): String = if (ok && !refreshed) "$message（宿主刷新未响应）" else message
 }

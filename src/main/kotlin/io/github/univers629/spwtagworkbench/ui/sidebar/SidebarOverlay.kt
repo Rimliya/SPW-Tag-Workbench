@@ -40,6 +40,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.github.univers629.spwtagworkbench.backend.model.TagField
 import io.github.univers629.spwtagworkbench.core.Card
 import io.github.univers629.spwtagworkbench.core.Diag
 import io.github.univers629.spwtagworkbench.core.FieldBox
@@ -51,6 +52,7 @@ import io.github.univers629.spwtagworkbench.core.T
 import io.github.univers629.spwtagworkbench.core.Txt
 import io.github.univers629.spwtagworkbench.core.fmtTime
 import io.github.univers629.spwtagworkbench.core.sidebarSolid
+import io.github.univers629.spwtagworkbench.data.Drafts
 import io.github.univers629.spwtagworkbench.data.Repo
 import io.github.univers629.spwtagworkbench.data.Status
 import io.github.univers629.spwtagworkbench.data.Tags
@@ -229,98 +231,121 @@ private fun SidebarPanel(
     val track = Repo.track
     val original = if (track.isPresent) track else Repo.focused()
     // 预览制：显示草稿合成后的值
-    val meta =
-        io.github.univers629.spwtagworkbench.data.Drafts
-            .merge(original)
+    val meta = Drafts.merge(original)
+    // 有未保存改动的字段：与主视图一样在标签前加圆点
+    val changed = Drafts
+        .draftFor(meta.key)
+        ?.fields
+        ?.keys
+        .orEmpty()
 
-    // 贴右边：整块面板铺满高度，右边缘与窗口齐平。
-    //
-    // **顶部安全区（guide §9.16）**：层级 A 从窗口 y=0 开始铺，标题行会被
-    // 宿主右上角的窗口按钮（最小化/最大化/关闭）遮挡。按 guide 的做法：
-    // 背景照常从 0 铺满（面板底色连续，不留透明缺口），内容整体下移
-    // TITLEBAR_SAFE_TOP，标题行落在安全区之下。
-    // 该区域同时是窗口拖动区——面板内容不占据这里，指针不会被面板吃掉。
-    Column(
+    Box(
         modifier =
             modifier
                 .clip(PanelShape)
                 .background(palette.cardOverlay)
                 .border(0.5.dp, palette.border, PanelShape),
     ) {
-        Spacer(Modifier.height(TITLEBAR_SAFE_TOP))
-        Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-                    .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Txt("音乐标签工作台", size = T.title, color = palette.text, maxLines = 1)
-            Spacer(Modifier.weight(1f))
-            Box(
+        Column(Modifier.fillMaxSize()) {
+            // **顶部安全区（guide §9.16）**：层级 A 从窗口 y=0 开始铺，最上面
+            // 44dp 是宿主标题栏（窗口按钮 + 拖动区）。底色照常铺满，
+            // 内容从安全区之下开始，这一段不参与点击，指针留给窗口拖动。
+            Spacer(Modifier.height(TITLEBAR_SAFE_TOP))
+
+            Column(
                 modifier =
                     Modifier
-                        .size(26.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(palette.hover)
-                        .clickable(onClick = onClose),
-                contentAlignment = Alignment.Center,
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 16.dp),
             ) {
-                Txt("✕", size = Glyph.inline, color = palette.textSecondary, maxLines = 1)
+                if (!meta.isPresent) {
+                    Spacer(Modifier.height(20.dp))
+                    Txt(
+                        text = "当前没有播放中的曲目。\n宿主开始播放后，这里会显示曲目信息。",
+                        size = T.caption,
+                        color = palette.textTertiary,
+                        maxLines = 3,
+                    )
+                    return@Column
+                }
+
+                // 这张卡片是进入工作台动画的锚点
+                AnchorCard(meta)
+
+                // 打开工作台：紧贴音乐卡片下方
+                Spacer(Modifier.height(10.dp))
+                OpenWorkbenchButton(onClose)
+
+                // ── 标签区：与主视图元数据同一套排版 ──────────────────────────
+                // 回放增益由一键测量产生，单独置顶，与可手填字段分离。
+                Spacer(Modifier.height(14.dp))
+                PairRow(
+                    first = Triple("音轨增益", meta.replayGainTrackGain, Tags.Key.TrackGain),
+                    second = Triple("音轨峰值", meta.replayGainTrackPeak, Tags.Key.TrackPeak),
+                    editable = meta.hasFile,
+                    firstChanged = TagField.ReplayGainTrackGain in changed,
+                    secondChanged = TagField.ReplayGainTrackPeak in changed,
+                )
+                PairRow(
+                    first = Triple("专辑增益", meta.replayGainAlbumGain, Tags.Key.AlbumGain),
+                    second = Triple("专辑峰值", meta.replayGainAlbumPeak, Tags.Key.AlbumPeak),
+                    editable = meta.hasFile,
+                    firstChanged = TagField.ReplayGainAlbumGain in changed,
+                    secondChanged = TagField.ReplayGainAlbumPeak in changed,
+                )
+                Spacer(Modifier.height(6.dp))
+
+                MetaField("标题", meta.title, Tags.Key.Title, meta.hasFile, TagField.Title in changed)
+                MetaField("艺术家", meta.artist, Tags.Key.Artist, meta.hasFile, TagField.Artist in changed)
+                MetaField("专辑", meta.album, Tags.Key.Album, meta.hasFile, TagField.Album in changed)
+                MetaField("年份", meta.year, Tags.Key.Year, meta.hasFile, TagField.Year in changed)
+                PairRow(
+                    first = Triple("音轨号", meta.track, Tags.Key.Track),
+                    second = Triple("碟号", meta.disc, Tags.Key.Disc),
+                    editable = meta.hasFile,
+                    firstChanged = TagField.Track in changed,
+                    secondChanged = TagField.Disc in changed,
+                )
+                MetaField("风格", meta.genre, Tags.Key.Genre, meta.hasFile, TagField.Genre in changed)
+                MetaField(
+                    "专辑艺术家",
+                    meta.albumArtist,
+                    Tags.Key.AlbumArtist,
+                    meta.hasFile,
+                    TagField.AlbumArtist in changed,
+                )
+                MetaField("作曲家", meta.composer, Tags.Key.Composer, meta.hasFile, TagField.Composer in changed)
+                MetaField("作词家", meta.lyricist, Tags.Key.Lyricist, meta.hasFile, TagField.Lyricist in changed)
+                MetaField(
+                    label = "注释",
+                    value = meta.comment,
+                    key = Tags.Key.Comment,
+                    editable = meta.hasFile,
+                    changed = TagField.Comment in changed,
+                    lines = 3,
+                )
+
+                Spacer(Modifier.height(10.dp))
+                StatusLine()
+                Spacer(Modifier.height(6.dp))
             }
         }
 
+        // 关闭按钮浮在音乐卡片右上角：**不占布局**，卡片不被挤压，
+        // 也不随内容滚动。
         Box(
             modifier =
                 Modifier
-                    .fillMaxWidth()
-                    .height(0.5.dp)
-                    .background(palette.border),
-        )
-
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                    .align(Alignment.TopEnd)
+                    .padding(top = TITLEBAR_SAFE_TOP + 16.dp, end = 22.dp)
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(palette.cardRaised.copy(alpha = 0.92f))
+                    .clickable(onClick = onClose),
+            contentAlignment = Alignment.Center,
         ) {
-            if (!meta.isPresent) {
-                Spacer(Modifier.height(20.dp))
-                Txt(
-                    text = "当前没有播放中的曲目。\n宿主开始播放后，这里会显示曲目信息。",
-                    size = T.caption,
-                    color = palette.textTertiary,
-                    maxLines = 3,
-                )
-                return@Column
-            }
-
-            // 这张卡片就是进入工作台动画的锚点
-            AnchorCard(meta)
-
-            Spacer(Modifier.height(14.dp))
-            val dirty = io.github.univers629.spwtagworkbench.data.Drafts.dirtyCount
-            Txt(
-                text = if (dirty > 0) "改动只在内存 · $dirty 首待保存" else "常用标签 · 编辑后点工作台保存",
-                size = T.micro,
-                color = if (dirty > 0) palette.warn else palette.textTertiary,
-                maxLines = 1,
-            )
-            Spacer(Modifier.height(9.dp))
-
-            SidebarField("标题", meta.title, Tags.Key.Title, meta.hasFile)
-            SidebarField("艺术家", meta.artist, Tags.Key.Artist, meta.hasFile)
-            SidebarField("专辑", meta.album, Tags.Key.Album, meta.hasFile)
-            SidebarField("风格", meta.genre, Tags.Key.Genre, meta.hasFile)
-
-            Spacer(Modifier.height(10.dp))
-            StatusLine()
-
-            Spacer(Modifier.height(16.dp))
-            OpenWorkbenchButton(onClose)
-            Spacer(Modifier.height(20.dp))
+            Txt("✕", size = Glyph.inline, color = palette.textSecondary, maxLines = 1)
         }
     }
 }
@@ -346,7 +371,8 @@ private fun AnchorCard(meta: TrackMeta) {
         outline = palette.border,
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            // end 多留 22dp：关闭按钮浮在卡片右上角，避免压住文字
+            modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 34.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -414,27 +440,100 @@ private fun AnchorCard(meta: TrackMeta) {
     }
 }
 
+/** 与主视图元数据区一致的一行：左标签（86dp）+ 右输入框。 */
 @Composable
-private fun SidebarField(
+private fun MetaField(
     label: String,
     value: String,
     key: Tags.Key,
     editable: Boolean,
+    changed: Boolean = false,
+    lines: Int = 1,
 ) {
-    val palette = Salt
-    Column(Modifier.padding(bottom = 9.dp)) {
-        // 字段标签：caption(11)，不小于它下面 label(12) 的值，避免标签比内容还小
-        Txt(label, size = T.caption, color = palette.textTertiary, maxLines = 1)
-        Spacer(Modifier.height(3.dp))
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+        // 多行框要顶对齐：居中会让标签飘在框的中间
+        verticalAlignment = if (lines > 1) Alignment.Top else Alignment.CenterVertically,
+    ) {
+        MetaLabel(label, changed, lines)
         FieldBox(
             value = value,
             onCommit = { Repo.stageField(key, it) },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.weight(1f),
+            placeholder = "未填写",
+            singleLine = lines <= 1,
+            readOnly = !editable,
+            size = T.label,
+        )
+    }
+}
+
+/**
+ * 两个短字段并排一行（音轨号 + 碟号、增益 + 峰值）。
+ *
+ * 与主视图同款排法：第一格只有值，第二格前面带标签，
+ * 两个 1~3 位短值各占一整行会把面板拉得过长。
+ */
+@Composable
+private fun PairRow(
+    first: Triple<String, String, Tags.Key>,
+    second: Triple<String, String, Tags.Key>,
+    editable: Boolean,
+    firstChanged: Boolean = false,
+    secondChanged: Boolean = false,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MetaLabel(first.first, firstChanged)
+        FieldBox(
+            value = first.second,
+            onCommit = { Repo.stageField(first.third, it) },
+            modifier = Modifier.weight(1f),
+            placeholder = "未填写",
+            readOnly = !editable,
+            size = T.label,
+        )
+        Txt(
+            text = second.first,
+            size = T.caption,
+            color = if (secondChanged) Salt.warn else Salt.textTertiary,
+            modifier = Modifier.padding(start = 10.dp, end = 8.dp),
+            maxLines = 1,
+        )
+        FieldBox(
+            value = second.second,
+            onCommit = { Repo.stageField(second.third, it) },
+            modifier = Modifier.weight(1f),
             placeholder = "未填写",
             readOnly = !editable,
             size = T.label,
         )
     }
+}
+
+/** 行首标签；有未保存改动时前面加一个圆点。宽度与主视图一致（86dp）。 */
+@Composable
+private fun MetaLabel(
+    label: String,
+    changed: Boolean,
+    lines: Int = 1,
+) {
+    val palette = Salt
+    Txt(
+        text = if (changed) "● $label" else label,
+        size = T.caption,
+        color = if (changed) palette.warn else palette.textTertiary,
+        modifier = Modifier.width(86.dp).padding(top = if (lines > 1) 6.dp else 0.dp),
+        maxLines = 1,
+    )
 }
 
 @Composable

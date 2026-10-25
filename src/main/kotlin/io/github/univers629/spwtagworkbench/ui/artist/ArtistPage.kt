@@ -67,6 +67,9 @@ fun ArtistPage(interactive: Boolean) {
     }
 
     val chosen = Repo.artistCandidate
+    // 当前编辑的槽位：两个槽位都写 type=8，互不影响
+    val slotIndex = Repo.artistSlotIndex
+    val slotLabel = "槽 ${slotIndex + 1}"
 
     DetailScaffold(
         page = SpacePage.Artist,
@@ -76,6 +79,16 @@ fun ArtistPage(interactive: Boolean) {
         // 与其它三页统一：进度走顶栏中间的进度条，源标签统计不再显示
         progress = sourceDoneFraction(Repo.artistSourceStates()),
         actions = {
+            // 槽位切换：两个槽位都写 type=8，只改所选槽位的图
+            repeat(Repo.artistSlotCount) { index ->
+                TapChip(
+                    label = "槽 ${index + 1}",
+                    onClick = { Repo.selectArtistSlot(index) },
+                    accent = if (slotIndex == index) palette.accent else palette.textTertiary,
+                    enabled = interactive,
+                )
+                Spacer(Modifier.width(8.dp))
+            }
             // 导入 / 导出已移到左侧本地图下方；顶栏只留「写入草稿」
             TapChip(
                 label = "写入草稿",
@@ -96,7 +109,7 @@ fun ArtistPage(interactive: Boolean) {
                             .padding(horizontal = 18.dp, vertical = 14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Txt("艺术家图预览", size = T.micro, color = palette.textTertiary, maxLines = 1)
+                    Txt("艺术家图预览（$slotLabel）", size = T.micro, color = palette.textTertiary, maxLines = 1)
                     Spacer(Modifier.height(8.dp))
                     Box(
                         modifier =

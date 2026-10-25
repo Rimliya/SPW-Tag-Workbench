@@ -268,15 +268,25 @@ class Aggregator(
      * 单源候选的排序依据。
      *
      * 截断到 [MAX_PER_SOURCE] 是**按排序结果取前几条**，所以排序键决定了
-     * 谁会活下来。封面看标题（要有同一首歌的封面），艺术家图要看艺人
-     * （艺人的图对他任何一首歌都一样），两者不能共用一个键。
+     * 谁会活下来。三类用途的判据各不相同，不能共用一个键：歌词与元数据看曲名，
+     * 艺术家图看艺人（艺人的图对他任何一首歌都一样），
+     * 专辑封面看源解析出的那张专辑（同一张专辑的曲目共用封面）。
      */
     enum class GroupRank {
-        /** 按标题相关性 —— 封面、歌词、元数据用。 */
+        /** 按标题相关性 —— 歌词、元数据用。 */
         TITLE,
 
         /** 艺术家兼容优先，其次才是标题相关性 —— 艺术家图页用。 */
         ARTIST,
+
+        /**
+         * 源解析出的那张专辑优先 —— 封面页在**按专辑检索**时用。
+         *
+         * 检索已按专辑发出，但源返回的专辑名可能被本地化，标题相关性
+         * 在这类结果上基本为 0，截断会退化为随机切。先按「众数专辑」聚拢，
+         * 保证保留的 5 条均属于目标专辑。
+         */
+        ALBUM,
     }
 
     /** 单源搜索（封面流式载入用）。 */
@@ -286,13 +296,19 @@ class Aggregator(
         rank: GroupRank = GroupRank.TITLE,
     ): SourceGroup? {
         val result = withTimeoutOrNull(searchTimeoutMs) { source.search(query) }
+        val candidates = result?.candidates.orEmpty()
+        // 众数专辑只在按专辑检索时有意义；按曲名检索的结果分散在多张专辑上
+        val targetAlbum =
+            if (query.album.isNotBlank() && rank == GroupRank.ALBUM) {
+                CandidateScoring.dominantAlbum(candidates)
+            } else {
+                null
+            }
         val items =
-            result
-                ?.candidates
-                ?.map { candidate ->
+            candidates
+                .map { candidate ->
                     GroupedCandidate(candidate = candidate, level = CandidateScoring.level(query, candidate))
-                }.orEmpty()
-                .sortedWith(
+                }.sortedWith(
                     when (rank) {
                         GroupRank.TITLE -> compareByDescending<GroupedCandidate> { it.level }
 
@@ -301,6 +317,11 @@ class Aggregator(
                         GroupRank.ARTIST ->
                             compareByDescending<GroupedCandidate> {
                                 if (CandidateScoring.artistCompatible(query.artist, it.candidate.artist)) 1 else 0
+                            }.thenByDescending { it.level }
+
+                        GroupRank.ALBUM ->
+                            compareByDescending<GroupedCandidate> {
+                                if (targetAlbum != null && it.candidate.album == targetAlbum) 1 else 0
                             }.thenByDescending { it.level }
                     },
                 )

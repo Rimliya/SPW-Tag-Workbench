@@ -187,10 +187,40 @@ class TagPatch {
 data class CoverArt(
     val bytes: ByteArray,
     val mime: String,
+    /**
+     * 图片描述（ID3v2 APIC 的 content descriptor / FLAC PICTURE 的 description）。
+     *
+     * ID3v2 规范要求同一标签里多张图必须有**不同的描述**，否则属于重复帧；
+     * 两张艺术家图因此靠这里区分槽位。
+     */
+    val description: String = "",
 ) {
     override fun equals(other: Any?): Boolean = other is CoverArt && other.mime == mime && other.bytes.contentEquals(bytes)
 
     override fun hashCode(): Int = 31 * mime.hashCode() + bytes.contentHashCode()
+}
+
+/**
+ * 两张艺术家图的槽位标识。
+ *
+ * 规范没有「序号」字段，槽位身份写进图片描述里：
+ * ID3v2 靠它满足「同类型多图描述必须不同」，读取时也优先按描述找回槽位。
+ * 其它工具写的图没有这个前缀，读取端回退到出现顺序。
+ */
+object ArtistSlotMark {
+    /** 形如 `SPW-ARTIST-1` / `SPW-ARTIST-2`。 */
+    fun description(index: Int): String = "SPW-ARTIST-${index + 1}"
+
+    /** 由描述反查槽位下标；不是本插件写的图返回 null。 */
+    fun indexOf(description: String?): Int? {
+        val text = description?.trim().orEmpty()
+        if (!text.startsWith(PREFIX)) return null
+        val n = text.removePrefix(PREFIX).toIntOrNull() ?: return null
+        return if (n in 1..SLOT_LIMIT) n - 1 else null
+    }
+
+    private const val PREFIX = "SPW-ARTIST-"
+    private const val SLOT_LIMIT = 8
 }
 
 /** 单文件写入结果。status 决定 UI 上给什么反馈。 */

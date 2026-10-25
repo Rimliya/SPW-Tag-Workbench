@@ -252,18 +252,19 @@ private val lightOverlay = overlayOf(lightSolid)
 /**
  * 全局侧栏悬浮按钮在材质下的不透明度。
  *
- * 取 75%，与侧栏面板（[SIDEBAR_MATERIAL_ALPHA]）一致：按钮与面板属于同一套浮层，
- * 两者不透明度差太多会显得材质拼接不上。无材质时没有可透出的底，按钮保持不透明原色。
+ * 取 60%：按钮比侧栏面板（[SIDEBAR_MATERIAL_ALPHA]，75%）更透，
+ * 让材质在按钮上透得更明显，同时仍保证图标可辨。
+ * 无材质时没有可透出的底，按钮保持不透明原色。
  */
-private const val FAB_MATERIAL_ALPHA = 0.75f
+private const val FAB_MATERIAL_ALPHA = 0.60f
 
 /**
- * 悬浮按钮底色：材质下用浮层配方的 75% 不透明度，无材质下用不透明原色。
+ * 悬浮按钮底色：材质下用浮层配方的 60% 不透明度，无材质下用不透明原色。
  *
  * 之所以不直接用 [Palette.card]：材质配方的卡面是「提亮覆盖色」，
  * 叠在材质上的不透明度只有 16%–44%，深色下按钮会显得比旁边侧栏面板虚一截；
  * 而浮层配方（[overlaySolid]）在深浅两套主题下都是校准过的实色底，
- * 压到 75% 后能稳定透出材质，浅色不会因为底本身就接近白色而看起来「完全不透明」。
+ * 压到 60% 后能稳定透出材质；浅色下底色接近白色，低不透明度仍显得偏实。
  */
 val Palette.fabCard: Color
     get() = if (material) overlaySolid.card.copy(alpha = FAB_MATERIAL_ALPHA) else card

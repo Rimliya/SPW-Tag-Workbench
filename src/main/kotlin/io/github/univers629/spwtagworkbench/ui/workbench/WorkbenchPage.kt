@@ -82,42 +82,8 @@ fun WorkbenchPage() {
                 .background(Salt.pageOverlay),
     ) {
         DeskDetail(Modifier.fillMaxSize())
-        // **批量确认弹窗放在页面根级**：PanelDialog 是 Box(fillMaxSize)，
-        // 只有父容器覆盖整页时才能在整个窗口居中。
-        // 按钮在深层元数据框里，所以弹窗由这里统一渲染。
-        if (Repo.pendingAlbumBatch) {
-            val pal = Salt
-            val count = Repo.albumBatchCount
-            io.github.univers629.spwtagworkbench.core.PanelDialog(
-                onDismiss = { Repo.dismissAlbumBatch() },
-                width = 420.dp,
-            ) {
-                Txt("套用到同专辑", size = T.heading, color = pal.text, maxLines = 1)
-                Txt(
-                    text = "将把专辑 / 专辑艺术家 / 流派 / 年份 写入同专辑的 $count 首曲目，" +
-                        "包括当前这首。这会直接修改磁盘文件，无法撤销。",
-                    size = T.caption,
-                    color = pal.textSecondary,
-                )
-                Spacer(Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Spacer(Modifier.weight(1f))
-                    TapChip(
-                        label = "取消",
-                        onClick = { Repo.dismissAlbumBatch() },
-                        accent = pal.textTertiary,
-                    )
-                    TapChip(
-                        label = "写入 $count 首",
-                        onClick = {
-                            Repo.dismissAlbumBatch()
-                            Repo.writeAlbumBatch(Tags.Key.ALBUM_LEVEL)
-                        },
-                        accent = pal.accent,
-                    )
-                }
-            }
-        }
+        // 专辑批量确认弹窗由 SpaceCanvas 根级统一渲染：
+        // 桌面始终在树里，而专题页盖在它之上，弹窗留在这里会被专题页挡住。
         StatusBar(
             modifier =
                 Modifier
@@ -270,8 +236,11 @@ private fun CoverPane(
                         ArtistSlot(
                             slot = slots.getOrNull(i),
                             modifier = Modifier.weight(1f),
-                            // 两个入口之一：主页这两个小槽直接进艺术家匹配页
-                            onClick = { SpaceRouter.navigate(SpacePage.Artist) },
+                            // 两个槽位都写 type=8：点哪个编辑哪个，互不影响
+                            onClick = {
+                                Repo.selectArtistSlot(i)
+                                SpaceRouter.navigate(SpacePage.Artist)
+                            },
                         )
                     }
                 }
@@ -490,16 +459,12 @@ private fun MetadataCard(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                Txt(
-                    text =
-                        when {
-                            !original.hasFile -> "曲目无文件，只读"
-                            draft != null -> "改动只在内存，点保存才落盘"
-                            else -> "编辑后点「保存」写入标签"
-                        },
-                    size = T.micro,
-                    color = if (draft != null) pal.warn else pal.textTertiary,
-                    maxLines = 1,
+                // 回放增益在频谱页测量：那边与频谱共用同一次 BASS 解码结果，
+                // 所以入口指向频谱页，而不是在元数据区重复跑一遍扫描。
+                TapChip(
+                    label = "计算回放增益",
+                    onClick = { SpaceRouter.navigate(SpacePage.Spectrum) },
+                    enabled = original.hasFile,
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -529,6 +494,22 @@ private fun MetadataCard(
                 editable = original.hasFile,
                 changed = isDirty(TagField.Comment),
                 lines = 3,
+            )
+            // 回放增益同样是标签字段（REPLAYGAIN_*），与频谱页测量、写入的是同一组键。
+            // 四个值两行：音轨一对、专辑一对；数值格式由规范固定（`-9.38 dB` / `0.999900`）。
+            MetaPairRow(
+                first = Triple("音轨增益", meta.replayGainTrackGain, Tags.Key.TrackGain),
+                second = Triple("音轨峰值", meta.replayGainTrackPeak, Tags.Key.TrackPeak),
+                editable = original.hasFile,
+                firstChanged = isDirty(TagField.ReplayGainTrackGain),
+                secondChanged = isDirty(TagField.ReplayGainTrackPeak),
+            )
+            MetaPairRow(
+                first = Triple("专辑增益", meta.replayGainAlbumGain, Tags.Key.AlbumGain),
+                second = Triple("专辑峰值", meta.replayGainAlbumPeak, Tags.Key.AlbumPeak),
+                editable = original.hasFile,
+                firstChanged = isDirty(TagField.ReplayGainAlbumGain),
+                secondChanged = isDirty(TagField.ReplayGainAlbumPeak),
             )
 
             Spacer(Modifier.height(12.dp))

@@ -174,6 +174,25 @@ object CandidateScoring {
         return titleLevel
     }
 
+    /**
+     * 结果里出现次数最多的专辑名 —— **源把「按专辑检索」解析成了哪张专辑**。
+     *
+     * 仅用于封面检索：检索按专辑发出时，源返回的是它匹配到的那张专辑，
+     * 但**专辑名与曲名都可能被本地化**，无法与本地标签做字符串比对 ——
+     * iTunes 会把「君の名は。 / 前前前世」返回成「Your Name. / Dream Lantern」，
+     * 标题与专辑名均无法匹配，候选被判为不相关。
+     *
+     * 取众数就不依赖任何字符串相等：占比最高的那张专辑就是源的理解。
+     * 结果分散在多张专辑上时（按曲名检索）众数很低，调用方应改用标题判定。
+     */
+    fun dominantAlbum(candidates: List<SourceCandidate>): String? =
+        candidates
+            .mapNotNull { it.album.trim().takeIf(String::isNotEmpty) }
+            .groupingBy { it }
+            .eachCount()
+            .maxByOrNull { it.value }
+            ?.key
+
     /** 艺术家兼容：任一为空视为兼容；否则要求互相包含或相似度够高。 */
     fun artistCompatible(
         a: String,

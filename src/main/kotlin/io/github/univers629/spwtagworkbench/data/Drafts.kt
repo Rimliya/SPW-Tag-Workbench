@@ -57,25 +57,30 @@ data class TrackDraft(
     val fields: Map<TagField, String> = emptyMap(),
     /** 专辑封面（ID3v2 type=3 / FLAC Front Cover）。 */
     val cover: DraftImage? = null,
-    /** 艺术家图（ID3v2 type=8 / FLAC Artist）。与 [cover] 是两张不同的图，互不覆盖。 */
-    val artistCover: DraftImage? = null,
+    /**
+     * 艺术家图，按**槽位下标**分开存（0 = 左槽，1 = 右槽）。
+     *
+     * 两个槽位都写 type=8（Artist），彼此独立：写槽 0 不影响槽 1，
+     * 也都不影响 [cover] 的专辑封面。
+     */
+    val artistCovers: Map<Int, DraftImage> = emptyMap(),
     val lyrics: String? = null,
 ) {
     val isEmpty: Boolean
-        get() = fields.isEmpty() && cover == null && artistCover == null && lyrics == null
+        get() = fields.isEmpty() && cover == null && artistCovers.isEmpty() && lyrics == null
 
     val fieldCount: Int
         get() =
             fields.size +
                 (if (cover != null) 1 else 0) +
-                (if (artistCover != null) 1 else 0) +
+                artistCovers.size +
                 (if (lyrics != null) 1 else 0)
 
     override fun equals(other: Any?): Boolean =
         other is TrackDraft &&
             other.fields == fields &&
             other.cover == cover &&
-            other.artistCover == artistCover &&
+            other.artistCovers == artistCovers &&
             (other.lyrics == null) == (lyrics == null)
 
     override fun hashCode(): Int = fields.hashCode() * 31 + fieldCount
@@ -176,14 +181,21 @@ object Drafts {
         put(trackKey, current.copy(cover = image))
     }
 
-    /** 暂存艺术家图（type=8），与 [stageCover] 的专辑封面互不覆盖。 */
+    /**
+     * 暂存一张艺术家图，按**槽位下标**分开存（两个槽位都写 type=8）。
+     *
+     * 槽位独立：写槽 0 不影响槽 1，也都不影响 [stageCover] 写入的专辑封面。
+     */
     fun stageArtistCover(
         trackKey: String,
         bytes: ByteArray,
+        slotIndex: Int,
     ) {
-        val image = persistImage(trackKey, bytes, "artist") ?: return
+        val image = persistImage(trackKey, bytes, "artist-$slotIndex") ?: return
         val current = drafts[trackKey] ?: TrackDraft()
-        put(trackKey, current.copy(artistCover = image))
+        val covers = current.artistCovers.toMutableMap()
+        covers[slotIndex] = image
+        put(trackKey, current.copy(artistCovers = covers))
     }
 
     /**
@@ -255,7 +267,7 @@ object Drafts {
 
     /** 删掉草稿引用的临时图片文件。 */
     private fun dropImages(draft: TrackDraft) {
-        for (img in listOfNotNull(draft.cover, draft.artistCover)) {
+        for (img in listOfNotNull(draft.cover) + draft.artistCovers.values) {
             val p = img.path ?: continue
             runCatching { File(p).delete() }
         }
@@ -283,6 +295,10 @@ object Drafts {
                     TagField.AlbumArtist -> merged.copy(albumArtist = value)
                     TagField.Genre -> merged.copy(genre = value)
                     TagField.Year -> merged.copy(year = value)
+                    TagField.ReplayGainTrackGain -> merged.copy(replayGainTrackGain = value)
+                    TagField.ReplayGainTrackPeak -> merged.copy(replayGainTrackPeak = value)
+                    TagField.ReplayGainAlbumGain -> merged.copy(replayGainAlbumGain = value)
+                    TagField.ReplayGainAlbumPeak -> merged.copy(replayGainAlbumPeak = value)
                     else -> merged
                 }
         }

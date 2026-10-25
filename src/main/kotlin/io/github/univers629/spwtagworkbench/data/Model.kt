@@ -25,6 +25,11 @@ data class TrackMeta(
     val lyricist: String = "",
     val composer: String = "",
     val comment: String = "",
+    /** ReplayGain 四个标签的原始文本；空串表示文件里没有写。 */
+    val replayGainTrackGain: String = "",
+    val replayGainTrackPeak: String = "",
+    val replayGainAlbumGain: String = "",
+    val replayGainAlbumPeak: String = "",
     val path: String = "",
     val durationMs: Long = 0L,
     val readable: Boolean = true,
@@ -181,6 +186,8 @@ data class CoverCandidate(
  * 带分辨率与字节数，界面要在图旁标出来（与 Tag-Workbench 的 `imageInfo` 一致）。
  */
 data class CoverSlot(
+    /** ID3v2 / FLAC 图片类型：两个槽位都是 8（Artist）。 */
+    val type: Int = 0,
     val label: String,
     val description: String,
     val mime: String,

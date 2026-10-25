@@ -11,6 +11,7 @@ import io.github.univers629.spwtagworkbench.backend.model.Track
 import io.github.univers629.spwtagworkbench.backend.model.WriteOutcome
 import io.github.univers629.spwtagworkbench.backend.read.ApeV2
 import io.github.univers629.spwtagworkbench.backend.read.ContainerKind
+import io.github.univers629.spwtagworkbench.backend.read.CoverStore
 import io.github.univers629.spwtagworkbench.backend.read.DffTags
 import io.github.univers629.spwtagworkbench.backend.read.Id3v2
 import io.github.univers629.spwtagworkbench.backend.read.JtUserFields
@@ -53,6 +54,9 @@ object AudioTagWriter {
     /** APEv2 容器只有一套封面（`Cover Art (Front)`）。 */
     const val APE_SINGLE_ARTWORK_MESSAGE = "APEv2 容器（APE/WV/TAK/TTA/MPC）只有一套封面，不支持单独写入艺术家图"
 
+    /** 该容器只能放一张图片，装不下两个艺术家图槽位。 */
+    const val MULTI_ARTIST_UNSUPPORTED = "该容器只能放一张图片，暂不支持同时写入两张艺术家图"
+
     /** 临时文件标记。扫描器据此排除，避免把写了一半的副本当歌曲导入。 */
     const val TEMP_INFIX = ".spw-write-"
 
@@ -72,6 +76,11 @@ object AudioTagWriter {
         cover: CoverArt? = null,
         /** 写图用的 ID3v2 / FLAC 类型：3 = Front Cover，8 = Artist。 */
         coverType: Int = PICTURE_FRONT_COVER,
+        /**
+         * 艺术家图（固定 type=8）。两个槽位各一张，**同一趟写进标签**：
+         * 写入前会先清掉同类型的旧图，分两次写会互相覆盖。
+         */
+        artistCovers: List<CoverArt> = emptyList(),
         refreshHost: Boolean = true,
         reloadLyricsForId: String? = null,
     ): WriteOutcome {
@@ -79,8 +88,15 @@ object AudioTagWriter {
         if (path.isBlank()) return WriteOutcome.failure(path, "曲目没有文件路径")
         val target = File(path)
         if (!target.isFile) return WriteOutcome.failure(path, "文件不存在")
-        if (!target.canWrite()) return WriteOutcome.failure(path, "文件不可写（只读或权限不足）")
-        if (patch.isEmpty && cover == null) return WriteOutcome.failure(path, "没有要写入的字段")
+        // **不做 canWrite() 硬拦截**：Windows 的 canWrite 走 access 检查，
+        // 在映射盘 / 网络共享 / 虚拟机共享目录上会误报只读（文件本身可写）。
+        // 这里只记日志，交给真实写入去判定，失败时再按异常给出准确原因。
+        if (!target.canWrite()) {
+            Diag.log("write: canWrite=false 仍尝试写入 ${target.name}（共享目录可能误报）")
+        }
+        if (patch.isEmpty && cover == null && artistCovers.isEmpty()) {
+            return WriteOutcome.failure(path, "没有要写入的字段")
+        }
 
         // MP4/M4A 的写前检查：加密文件、容器索引与真实数据对不上的文件都写不进去，
         // 而且后者的典型表现是底层库抛出 `newPosition > limit`。提前拦下比写坏文件好。
@@ -112,47 +128,71 @@ object AudioTagWriter {
         var replaced = false
         try {
             Files.copy(targetPath, temp, StandardCopyOption.REPLACE_EXISTING)
+            // 复制会带上源文件的只读属性（虚拟机共享目录、同步盘的占位文件常见）。
+            // 临时文件必须可写：标签库写盘前会做 canWrite 检查，只读会直接抛
+            // NoWritePermissionsException；收尾也删不掉只读文件。
+            makeWritable(temp)
 
             val container = ContainerKind.detect(temp.toFile())
+            // 只有一张艺术家图时沿用「写一张 type=8 封面」的既有路径，
+            // 单图在所有容器上都成立；两张仅标签库路径支持。
+            val singleArtist = cover == null && artistCovers.size == 1
+            val effCover = if (singleArtist) artistCovers.single() else cover
+            val effCoverType = if (singleArtist) PICTURE_ARTIST else coverType
+            val multiArtist = if (singleArtist) emptyList() else artistCovers
             if (container == ContainerKind.AAC) {
                 // AAC 裸流没有内建标签区：标签就是文件开头的一段 ID3v2，
                 // 只重写这段前缀，音频帧一个字节不动。
-                writeId3Prefix(temp.toFile(), patch, cover, coverType)
-                verifyId3Tag(Id3v2.read(temp.toFile()), patch, cover, coverType)
+                if (multiArtist.isNotEmpty()) return WriteOutcome.failure(path, MULTI_ARTIST_UNSUPPORTED)
+                writeId3Prefix(temp.toFile(), patch, effCover, effCoverType)
+                verifyId3Tag(Id3v2.read(temp.toFile()), patch, effCover, effCoverType)
             } else if (container == ContainerKind.DFF) {
                 // DFF 把 ID3v2 放在 `ID3 ` 块里：重建块链，音频块原样保留
-                writeDff(temp.toFile(), patch, cover, coverType)
-                verifyId3Tag(DffTags.read(temp.toFile()), patch, cover, coverType)
+                if (multiArtist.isNotEmpty()) return WriteOutcome.failure(path, MULTI_ARTIST_UNSUPPORTED)
+                writeDff(temp.toFile(), patch, effCover, effCoverType)
+                verifyId3Tag(DffTags.read(temp.toFile()), patch, effCover, effCoverType)
             } else if (container == ContainerKind.OPUS) {
                 // Opus：注释在 Ogg 第二个逻辑包里；封面存 METADATA_BLOCK_PICTURE
-                writeOggTags(temp.toFile(), patch, cover, coverType)
-                verifyOggTags(temp.toFile(), patch, cover, coverType)
+                if (multiArtist.isNotEmpty()) return WriteOutcome.failure(path, MULTI_ARTIST_UNSUPPORTED)
+                writeOggTags(temp.toFile(), patch, effCover, effCoverType)
+                verifyOggTags(temp.toFile(), patch, effCover, effCoverType)
             } else if (container == ContainerKind.TTA && Id3v2.read(temp.toFile()) != null) {
                 // TTA 的主标签习惯是文件开头的 ID3v2：沿用前缀写法，并同步尾部 ID3v1
-                writeId3Prefix(temp.toFile(), patch, cover, coverType)
-                verifyId3Tag(Id3v2.read(temp.toFile()), patch, cover, coverType)
+                if (multiArtist.isNotEmpty()) return WriteOutcome.failure(path, MULTI_ARTIST_UNSUPPORTED)
+                writeId3Prefix(temp.toFile(), patch, effCover, effCoverType)
+                verifyId3Tag(Id3v2.read(temp.toFile()), patch, effCover, effCoverType)
                 Id3v1.sync(temp.toFile(), patch)
+            } else if (multiArtist.isNotEmpty() && container == ContainerKind.MP4) {
+                // MP4 只有一套 covr，放不下第二张艺术家图
+                return WriteOutcome.failure(path, APE_SINGLE_ARTWORK_MESSAGE)
             } else if (container.isApeV2) {
                 // APEv2（APE / WV / TAK / TTA / MPC）：标签在文件尾部，只重写尾部即可。
                 // 这类容器只有一套封面，写艺术家图会顶掉专辑封面，直接拒绝。
-                if (coverType == PICTURE_ARTIST) {
+                if (effCoverType == PICTURE_ARTIST || multiArtist.isNotEmpty()) {
                     return WriteOutcome.failure(path, APE_SINGLE_ARTWORK_MESSAGE)
                 }
-                writeApeV2(temp.toFile(), patch, cover)
-                verifyApeV2(temp.toFile(), patch, cover)
+                writeApeV2(temp.toFile(), patch, effCover)
+                verifyApeV2(temp.toFile(), patch, effCover)
             } else {
-                applyTo(temp.toFile(), patch, cover, coverType)
-                verify(temp.toFile(), patch, cover, coverType)
+                applyTo(temp.toFile(), patch, effCover, effCoverType, multiArtist)
+                verify(temp.toFile(), patch, effCover, effCoverType, multiArtist)
                 // MP3 等容器常同时带 ID3v1：同步它，避免播放器读到旧值
                 Id3v1.sync(temp.toFile(), patch)
             }
 
             // 5. 先删后改名
+            // 原文件若是只读属性，Windows 连删除/改名都会拒绝：先临时去掉，
+            // 写完由 restoreAttributes 按快照还原。
+            makeWritable(targetPath)
             replaceByDeleteThenRename(targetPath, temp)
             replaced = true
 
             // 6. 还原属性
             restoreAttributes(targetPath, attributes)
+
+            // 7. 清读缓存：单图 / 多图 / 标签三处缓存都要失效，
+            //    否则保存后界面仍按旧缓存显示旧图（写入成功但看不到变化）。
+            CoverStore.invalidate(path)
 
             var refreshed = false
             var reloaded = false
@@ -186,14 +226,32 @@ object AudioTagWriter {
             Diag.log("write fail: ${target.name} -> $message")
             return WriteOutcome.failure(path, message)
         } finally {
-            // 7. 清理临时文件；改名成功后这里已是 no-op
+            // 8. 清理临时文件；改名成功后这里已是 no-op
             if (!replaced) {
                 try {
+                    // 只读的临时文件在 Windows 上删不掉，先放开再删
+                    makeWritable(temp)
                     Files.deleteIfExists(temp)
                 } catch (ignored: Throwable) {
                     Diag.log("write: 临时文件清理失败 ${temp.fileName}")
                 }
             }
+        }
+    }
+
+    /**
+     * 去掉只读属性（DOS readonly）。
+     *
+     * 只动这一个属性：虚拟机共享目录 / 同步盘把文件标成只读很常见，
+     * 这类位置的目录通常可写，但标签写入仍被拒绝。
+     * 写完后由 [restoreAttributes] 按快照把只读还原回去。
+     */
+    private fun makeWritable(path: Path) {
+        runCatching {
+            val view = Files.getFileAttributeView(path, DosFileAttributeView::class.java) ?: return
+            if (!view.readAttributes().isReadOnly) return
+            view.setReadOnly(false)
+            Diag.log("write: 临时去掉只读属性 ${path.fileName}")
         }
     }
 
@@ -204,6 +262,7 @@ object AudioTagWriter {
         patch: TagPatch,
         cover: CoverArt?,
         coverType: Int = PICTURE_FRONT_COVER,
+        artistCovers: List<CoverArt> = emptyList(),
     ) {
         val audio = AudioFileIO.read(file)
         val tag = alignId3Tag(audio)
@@ -225,12 +284,13 @@ object AudioTagWriter {
             // 只替换**同类型**的图，别的类型原样保留。
             // 这样写艺术家图（type=8）不会把专辑封面（type=3）抹掉。
             deleteArtworkOfType(tag, coverType)
-            val artwork = ArtworkFactory.getNew()
-            artwork.binaryData = cover.bytes
-            artwork.mimeType = cover.mime
-            artwork.pictureType = coverType
-            // 用 addField 追加；setField 在多图标签上可能覆盖掉已有的图
-            addArtwork(tag, artwork)
+            addArtwork(tag, artworkOf(cover, coverType))
+        }
+        if (artistCovers.isNotEmpty()) {
+            // 两张 type=8 必须一趟写完：先清一次旧图，再逐张追加；
+            // 分两次调用时，第二次会清掉第一次写入的图。
+            if (coverType != PICTURE_ARTIST) deleteArtworkOfType(tag, PICTURE_ARTIST)
+            artistCovers.forEach { addArtwork(tag, artworkOf(it, PICTURE_ARTIST)) }
         }
 
         applyId3Encoding(tag)
@@ -386,6 +446,7 @@ object AudioTagWriter {
         patch: TagPatch,
         cover: CoverArt?,
         coverType: Int = PICTURE_FRONT_COVER,
+        artistCovers: List<CoverArt> = emptyList(),
     ) {
         val audio = AudioFileIO.read(file)
         val tag = audio.tag
@@ -421,7 +482,38 @@ object AudioTagWriter {
                 )
             }
         }
+
+        if (artistCovers.isNotEmpty()) {
+            // 两张 type=8：按大小逐个核对，数量不足说明有图没写进去
+            val artworks =
+                try {
+                    tag?.artworkList.orEmpty().filter { safePictureType(it) == PICTURE_ARTIST }
+                } catch (_: Throwable) {
+                    emptyList()
+                }
+            val sizes = artworks.mapNotNull { artworkBytes(it)?.size }
+            for (art in artistCovers) {
+                if (sizes.none { it == art.bytes.size }) {
+                    throw IOException(
+                        "回读校验失败：艺术家图（type=$PICTURE_ARTIST，${art.bytes.size} 字节）未写入，原文件未替换",
+                    )
+                }
+            }
+        }
     }
+
+    private fun artworkOf(
+        cover: CoverArt,
+        pictureType: Int,
+    ): Artwork =
+        ArtworkFactory.getNew().also { artwork ->
+            artwork.binaryData = cover.bytes
+            artwork.mimeType = cover.mime
+            artwork.pictureType = pictureType
+            // 描述不是可选项：ID3v2 规定同一标签里多张图描述必须互不相同，
+            // 两张 type=8 艺术家图靠描述区分槽位。
+            if (cover.description.isNotBlank()) artwork.description = cover.description
+        }
 
     private fun readFirst(
         tag: Tag?,
@@ -1016,9 +1108,12 @@ object AudioTagWriter {
 
     private fun describe(t: Throwable): String {
         val cause = t.cause ?: t
+        val raw = cause.message.orEmpty()
         return when {
-            cause is java.nio.file.AccessDeniedException -> "文件被占用或无权限（宿主可能仍在播放）"
-            else -> friendlyError(cause.message.orEmpty(), cause.javaClass.simpleName)
+            cause is java.nio.file.AccessDeniedException -> "文件不可写（只读或权限不足）"
+            cause is java.nio.file.FileSystemException && raw.contains("read-only", ignoreCase = true) ->
+                "文件不可写（只读或权限不足）"
+            else -> friendlyError(raw, cause.javaClass.simpleName)
         }
     }
 
@@ -1037,6 +1132,11 @@ object AudioTagWriter {
             raw.contains("newPosition > limit") || raw.contains("newLimit > capacity") ->
                 "文件容器结构异常（内部偏移超出文件大小），未写入；原文件保持不变。" +
                     "该文件需先用其他工具重新保存，或转成 FLAC/MP3 后再写入"
+            raw.contains("拒绝访问") ||
+                raw.contains("Access is denied", ignoreCase = true) ||
+                raw.contains("access denied", ignoreCase = true) ||
+                raw.contains("read-only", ignoreCase = true) ->
+                "文件不可写（只读或权限不足）"
             raw.isEmpty() -> typeName
             else -> "$typeName: ${raw.take(90)}"
         }

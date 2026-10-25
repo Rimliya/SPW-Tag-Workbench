@@ -126,7 +126,7 @@ fun CoverPage(interactive: Boolean) {
                     maxLines = 1,
                 )
 
-                // 只放导入 / 导出；写入草稿在顶栏
+                // 只放导入 / 导出 / 套用到同专辑；写入草稿在顶栏
                 Spacer(Modifier.height(14.dp))
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TapChip(
@@ -147,6 +147,14 @@ fun CoverPage(interactive: Boolean) {
                             }
                         },
                         enabled = interactive && checked != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // 与主视图的「套用到同专辑」同一个入口：把当前曲目的专辑级字段
+                    // 写进同专辑全部曲目。确认弹窗由 SpaceCanvas 根级统一渲染。
+                    TapChip(
+                        label = "套用到同专辑",
+                        onClick = { Repo.requestAlbumBatch() },
+                        enabled = interactive && Repo.focused().hasFile,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

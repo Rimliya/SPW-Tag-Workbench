@@ -45,10 +45,13 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.univers629.spwtagworkbench.core.Card
+import io.github.univers629.spwtagworkbench.core.PanelDialog
 import io.github.univers629.spwtagworkbench.core.Salt
 import io.github.univers629.spwtagworkbench.core.T
+import io.github.univers629.spwtagworkbench.core.TapChip
 import io.github.univers629.spwtagworkbench.core.Txt
 import io.github.univers629.spwtagworkbench.data.Repo
+import io.github.univers629.spwtagworkbench.data.Tags
 import io.github.univers629.spwtagworkbench.router.SharedKey
 import io.github.univers629.spwtagworkbench.router.ShellState
 import io.github.univers629.spwtagworkbench.router.SpaceMetrics
@@ -184,6 +187,53 @@ fun SpaceCanvas() {
             ) {
                 DetailPage(page = target, interactive = interactive)
             }
+        }
+
+        // 专辑批量确认弹窗：**放在画布最上层**。
+        // 桌面始终在树里、专题页盖在它之上，弹窗放在任一页面里都会被另一页挡住；
+        // 这里作为根 Box 的最后一个子项，保证它压在全部页面之上，且只渲染一次。
+        AlbumBatchDialog()
+    }
+}
+
+/**
+ * 把当前曲目的专辑级字段套用到同专辑全部曲目的确认弹窗。
+ *
+ * 入口有两处：主视图的「套用到同专辑」，以及封面匹配页左侧的同名按钮。
+ * 两处都只调 [Repo.requestAlbumBatch]，弹窗由这里统一响应。
+ */
+@Composable
+private fun AlbumBatchDialog() {
+    if (!Repo.pendingAlbumBatch) return
+    val pal = Salt
+    val count = Repo.albumBatchCount
+    PanelDialog(
+        onDismiss = { Repo.dismissAlbumBatch() },
+        width = 420.dp,
+    ) {
+        Txt("套用到同专辑", size = T.heading, color = pal.text, maxLines = 1)
+        Txt(
+            text = "将把专辑 / 专辑艺术家 / 风格 / 年份 写入同专辑的 $count 首曲目，" +
+                "包括当前这首。这会直接修改磁盘文件，无法撤销。",
+            size = T.caption,
+            color = pal.textSecondary,
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(Modifier.weight(1f))
+            TapChip(
+                label = "取消",
+                onClick = { Repo.dismissAlbumBatch() },
+                accent = pal.textTertiary,
+            )
+            TapChip(
+                label = "写入 $count 首",
+                onClick = {
+                    Repo.dismissAlbumBatch()
+                    Repo.writeAlbumBatch(Tags.Key.ALBUM_LEVEL)
+                },
+                accent = pal.accent,
+            )
         }
     }
 }

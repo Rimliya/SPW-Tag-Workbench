@@ -14,6 +14,7 @@ import io.github.univers629.spwtagworkbench.backend.host.HostBridge
 import io.github.univers629.spwtagworkbench.backend.host.PlaybackSignal
 import io.github.univers629.spwtagworkbench.backend.lyrics.LyricsFormat
 import io.github.univers629.spwtagworkbench.backend.match.Matching
+import io.github.univers629.spwtagworkbench.backend.model.ArtistSlotMark
 import io.github.univers629.spwtagworkbench.backend.model.BatchProgress
 import io.github.univers629.spwtagworkbench.backend.model.BatchReport
 import io.github.univers629.spwtagworkbench.backend.model.CoverArt
@@ -21,6 +22,7 @@ import io.github.univers629.spwtagworkbench.backend.model.TagField
 import io.github.univers629.spwtagworkbench.backend.model.TagPatch
 import io.github.univers629.spwtagworkbench.backend.model.Track
 import io.github.univers629.spwtagworkbench.backend.model.WriteOutcome
+import io.github.univers629.spwtagworkbench.backend.read.CoverMime
 import io.github.univers629.spwtagworkbench.backend.read.CoverStore
 import io.github.univers629.spwtagworkbench.backend.read.EmbeddedPicture
 import io.github.univers629.spwtagworkbench.backend.read.PictureTypeStandard
@@ -587,28 +589,46 @@ object Repo {
         private set
 
     /**
-     * 主封面下方两个槽位。
+     * 主封面下方两个槽位：**都写 type=8（Artist），按出现顺序各占一格**。
      *
-     * 装艺术家类图片（Artist / LeadArtist / Band），按 [PictureTypeStandard.ARTIST_CHAIN]
-     * 的顺序取前两张可用的。标签里没有这类图时对应槽位为 null，界面显示占位。
+     * 每个槽位的显示优先级：
+     * 1. 草稿里该槽位的图（刚「写入草稿」还没保存）
+     * 2. 文件里第 N 张 type=8 的内嵌图
+     *
+     * 槽位没有图时为 null，界面显示占位；写槽 0 不会改动槽 1，也不会碰专辑封面。
      */
     var artistSlots by mutableStateOf<List<CoverSlot?>>(listOf(null, null))
         private set
 
+    /** 槽位数量：两个槽位都是 type=8（Artist），彼此独立。 */
+    val artistSlotCount: Int = SLOT_COUNT
+
+    /** 艺术家页当前正在编辑的槽位下标（0..1）。 */
+    var artistSlotIndex by mutableStateOf(0)
+        private set
+
+    /** 切到某个槽位：之后的勾选与「写入草稿」都作用于它。 */
+    fun selectArtistSlot(index: Int) {
+        if (index !in 0 until artistSlotCount) return
+        artistSlotIndex = index
+        artistCandidate = null
+    }
+
+    /** 两个槽位写入的类型都是 Artist(8)。 */
+    val currentArtistSlotType: Int get() = PictureTypeStandard.ARTIST
+
     /**
-     * 艺术家页左栏预览：本地艺术家图，或「写入草稿」后选中的网络图。
+     * 艺术家页左栏预览：当前槽位的图（草稿优先，其次文件）。
      *
-     * 直接复用 [artistSlots] 的第一格 —— 它的语义就是「当前显示的艺术家图」：
-     * 由 [loadCovers] 用本地图播种、由 [applyArtistCover] 换成选中的网络图，
-     * 而勾选（[chooseArtistCover]）不会改它。
+     * 槽位只在「应用草稿」或「重新读盘」时变化；勾选（[chooseArtistCover]）不动它。
      */
-    val artistPreview: ImageBitmap? get() = artistSlots.firstOrNull()?.image
+    val artistPreview: ImageBitmap? get() = artistSlots.getOrNull(artistSlotIndex)?.image
 
     /** 艺术家页左栏的分辨率 · 体积描述；没有图时为空串。 */
     val artistPreviewInfo: String
         get() =
             artistSlots
-                .firstOrNull()
+                .getOrNull(artistSlotIndex)
                 ?.let { slot ->
                     infoOfSize(slot.width, slot.height, slot.bytes)
                 }.orEmpty()
@@ -792,8 +812,23 @@ object Repo {
     fun onTrackChanged(item: PlaybackExtensionPoint.MediaItem) {
         val meta = item.toMeta()
         if (meta.key == track.key && track.isPresent) {
-            // 同一首歌刷新元数据（例如刚写完标签后宿主重读）
-            track = meta
+            // 同一首歌刷新元数据（例如刚写完标签后宿主重读）。
+            //
+            // 宿主的 MediaItem 只带曲库字段；音轨号 / 作词 / 注释 / ReplayGain
+            // 这些只有文件里有的值必须先保留，否则侧栏这类直接读 [track] 的界面
+            // 会被这次覆盖清空。
+            track =
+                meta.copy(
+                    track = track.track,
+                    disc = track.disc,
+                    lyricist = track.lyricist,
+                    composer = track.composer,
+                    comment = track.comment,
+                    replayGainTrackGain = track.replayGainTrackGain,
+                    replayGainTrackPeak = track.replayGainTrackPeak,
+                    replayGainAlbumGain = track.replayGainAlbumGain,
+                    replayGainAlbumPeak = track.replayGainAlbumPeak,
+                )
             return
         }
         Epoch.invalidateAll()
@@ -826,6 +861,11 @@ object Repo {
         if (selected == null || selected?.key == meta.key) selected = meta
         loadLyrics(meta)
         loadCovers(meta)
+        // 宿主 MediaItem 只带曲库字段，音轨号 / 碟号 / 作词 / 作曲 / 注释 / ReplayGain
+        // 只有文件里有。切歌后补读一次，否则元数据区这几行会一直是空的。
+        if (meta.hasFile) {
+            scope.launch { refreshFocusedFromDisk(meta, reloadContent = false) }
+        }
     }
 
     fun onPlayingChanged(value: Boolean) {
@@ -902,7 +942,14 @@ object Repo {
     }
 
     fun select(meta: TrackMeta) {
-        if (selected?.key == meta.key) return
+        if (selected?.key == meta.key) {
+            // 同一首再次选中：宿主的 meta 可能缺文件独有字段（音轨号 / 作词 /
+            // 注释 / ReplayGain），补读一次，避免这几行停在空值上。
+            if (meta.hasFile) {
+                scope.launch { refreshFocusedFromDisk(meta, reloadContent = false) }
+            }
+            return
+        }
         selected = meta
         Epoch.invalidateAll()
         lines = emptyList()
@@ -1310,38 +1357,48 @@ object Repo {
     }
 
     /**
-     * 主封面下方两个小槽的展示数据。
+     * 两个槽位的展示数据：**都是 type=8，按出现顺序各占一格**。
      *
-     * 只负责「显示」：本地标签里有艺术家类图片就显示本地的，
-     * 否则显示艺术家页里**已写入草稿**的那张（[artistCandidate] 只作兜底，
-     * 用来让已应用的预览在重新读盘后仍然留得住）。
-     * 真正的检索与挑选在 [loadNetworkArtistCovers] / [chooseArtistCover]。
+     * 每个槽位先看草稿（该槽位刚写入的图），再看文件里第 N 张 type=8 的内嵌图；
+     * 两者都没有时为 null。槽位之间不共享数据，写入一个槽位不影响另一个。
      */
     private fun buildArtistSlots(meta: TrackMeta): List<CoverSlot?> {
-        val pictures = runCatching { CoverStore.readPictures(meta.path) }.getOrDefault(emptyList())
-        val localArtistPics =
-            PictureTypeStandard.ARTIST_CHAIN
-                .mapNotNull { type -> pictures.firstOrNull { it.type == type } }
-        if (localArtistPics.isNotEmpty()) {
-            Diag.log("artistSlots: 用本地图 ${localArtistPics.size} 张")
-            return List(SLOT_COUNT) { i -> localArtistPics.getOrNull(i)?.toSlot() }
-        }
-        val chosen = artistCandidate
-        if (chosen != null) {
-            return listOf(
+        val pictures =
+            runCatching {
+                CoverStore.readPictures(meta.path).filter { it.type == PictureTypeStandard.ARTIST }
+            }.getOrDefault(emptyList())
+        // 规范里没有「槽位序号」字段：本插件写的图带 `SPW-ARTIST-N` 描述，
+        // 先按描述归位；别的工具写的图没有这个前缀，再按出现顺序补到空槽。
+        val unmarked = pictures.filter { ArtistSlotMark.indexOf(it.description) == null }.toMutableList()
+        val ordered =
+            List(artistSlotCount) { index ->
+                val marked = pictures.firstOrNull { ArtistSlotMark.indexOf(it.description) == index }
+                marked ?: unmarked.removeFirstOrNull()
+            }
+        val draft = Drafts.draftFor(meta.key)
+        return List(artistSlotCount) { index ->
+            val stagedBytes = draft?.artistCovers?.get(index)?.readBytes()
+            if (stagedBytes != null && stagedBytes.isNotEmpty()) {
+                val image = Host.decodeImage(stagedBytes)
+                val dim = Host.imageSize(stagedBytes)
                 CoverSlot(
-                    label = "艺术家",
-                    description = chosen.origin,
-                    mime = "",
-                    bytes = chosen.bytes?.size ?: 0,
-                    width = chosen.width,
-                    height = chosen.height,
-                    image = chosen.image,
-                ),
-                null,
-            )
+                    type = PictureTypeStandard.ARTIST,
+                    label = "艺术家 ${index + 1}",
+                    description = "草稿",
+                    mime = draft
+                        ?.artistCovers
+                        ?.get(index)
+                        ?.mime
+                        .orEmpty(),
+                    bytes = stagedBytes.size,
+                    width = dim.first,
+                    height = dim.second,
+                    image = image,
+                )
+            } else {
+                ordered.getOrNull(index)?.toSlot()
+            }
         }
-        return listOf(null, null)
     }
 
     /** 把一个内嵌图片转成槽位（含分辨率与字节数，界面要显示）。 */
@@ -1349,6 +1406,7 @@ object Repo {
         val decoded = Host.decodeImage(bytes)
         val dim = Host.imageSize(bytes)
         return CoverSlot(
+            type = type,
             label = PictureTypeStandard.label(type),
             description = description,
             mime = mime,
@@ -1631,6 +1689,10 @@ object Repo {
                     Tags.Key.Composer -> meta.copy(composer = value)
                     Tags.Key.Lyricist -> meta.copy(lyricist = value)
                     Tags.Key.Comment -> meta.copy(comment = value)
+                    Tags.Key.TrackGain -> meta.copy(replayGainTrackGain = value)
+                    Tags.Key.TrackPeak -> meta.copy(replayGainTrackPeak = value)
+                    Tags.Key.AlbumGain -> meta.copy(replayGainAlbumGain = value)
+                    Tags.Key.AlbumPeak -> meta.copy(replayGainAlbumPeak = value)
                 }
             if (selected?.key == meta.key) selected = updated
             if (track.key == meta.key) track = updated
@@ -1912,18 +1974,20 @@ object Repo {
             replayGainState = GainState.Idle
             return
         }
-        val trackFile = runCatching { Tags.read(meta.path) }.getOrNull()
+        // 读失败（文件被宿主短时占用 / 共享目录抖动）时**保留上一次的值**：
+        // 清成空会让刚写入成功的曲目显示为未写入。
+        val trackFile =
+            runCatching { Tags.read(meta.path) }.getOrElse { t ->
+                Diag.log("replaygain: 读标签失败 ${meta.path.substringAfterLast('\\')} ${t.javaClass.simpleName}")
+                null
+            } ?: return
         replayGainExisting =
-            if (trackFile == null) {
-                ReplayGainValues()
-            } else {
-                ReplayGainValues(
-                    trackGain = trackFile.replayGainTrackGain,
-                    trackPeak = trackFile.replayGainTrackPeak,
-                    albumGain = trackFile.replayGainAlbumGain,
-                    albumPeak = trackFile.replayGainAlbumPeak,
-                )
-            }
+            ReplayGainValues(
+                trackGain = trackFile.replayGainTrackGain,
+                trackPeak = trackFile.replayGainTrackPeak,
+                albumGain = trackFile.replayGainAlbumGain,
+                albumPeak = trackFile.replayGainAlbumPeak,
+            )
     }
 
     /**
@@ -1996,6 +2060,19 @@ object Repo {
             postOnMain {
                 postStatus(Status(result.message, if (result.ok) Status.Kind.Ok else Status.Kind.Error))
                 if (result.ok) {
+                    // 刚写进去的值直接落到界面状态：不依赖回读，
+                    // 回读失败（宿主占着文件、共享目录抖动）也不会显示成「未写入」。
+                    replayGainExisting =
+                        ReplayGainValues(
+                            trackGain = scan.gainText(),
+                            trackPeak = scan.peakText(),
+                            albumGain = replayGainExisting.albumGain,
+                            albumPeak = replayGainExisting.albumPeak,
+                        )
+                    // 已经落盘，不再保留「未写入」的测量态（否则「写入」按钮还挂着）
+                    replayGainMeasured = null
+                    replayGainState = GainState.Idle
+                    // 再从磁盘校准一次（可能被播放器补写过别的东西）
                     if (focused().key == key) refreshReplayGain()
                 }
             }
@@ -2192,11 +2269,12 @@ object Repo {
                 ?: return Tags.Result(false, "艺术家图数据为空").also {
                     postStatus(Status(it.message, Status.Kind.Error))
                 }
-        Drafts.stageArtistCover(meta.key, bytes)
+        val slot = artistSlotIndex
+        Drafts.stageArtistCover(meta.key, bytes, slot)
         stageArtistPreview(meta, chosen, bytes)
         postStatus(
             Status(
-                "艺术家图已进草稿（${chosen.origin}），点保存才写文件",
+                "艺术家图 ${slot + 1} 已进草稿（${chosen.origin}），点保存才写文件",
                 Status.Kind.Ok,
             ),
         )
@@ -2204,7 +2282,7 @@ object Repo {
     }
 
     /**
-     * 把艺术家图换成预览：左栏与主视图两个小槽都读 [artistSlots]，改它就够。
+     * 把艺术家图换成预览：只替换**当前槽位**，另一个槽位保持原样。
      *
      * 与封面同样的两段式：先上网格图，再在 IO 线程重解一张更清晰的替换。
      * 重解完成时若已切歌，结果丢弃。
@@ -2214,7 +2292,8 @@ object Repo {
         chosen: CoverCandidate,
         bytes: ByteArray,
     ) {
-        artistSlots = artistSlotOf(chosen, chosen.image)
+        val index = artistSlotIndex
+        artistSlots = replaceSlot(index, artistSlotOf(chosen, chosen.image))
         val key = meta.key
         val gen = ++artistPreviewGen
         scope.launch {
@@ -2223,27 +2302,35 @@ object Repo {
                     runCatching { Host.decodeImageSampled(bytes, PREVIEW_MAX_EDGE) }.getOrNull()
                 }
             if (sharp != null && gen == artistPreviewGen && focused().key == key) {
-                withContext(Dispatchers.Main) { artistSlots = artistSlotOf(chosen, sharp) }
+                withContext(Dispatchers.Main) {
+                    artistSlots = replaceSlot(index, artistSlotOf(chosen, sharp))
+                }
             }
         }
     }
 
+    /** 只替换指定槽位，另一个槽位原样保留。 */
+    private fun replaceSlot(
+        index: Int,
+        slot: CoverSlot?,
+    ): List<CoverSlot?> = List(SLOT_COUNT) { i -> if (i == index) slot else artistSlots.getOrNull(i) }
+
     private fun artistSlotOf(
         chosen: CoverCandidate,
         image: ImageBitmap?,
-    ): List<CoverSlot?> =
-        listOf(
-            CoverSlot(
-                label = "艺术家",
-                description = chosen.origin,
-                mime = "",
-                bytes = chosen.bytes?.size ?: 0,
-                width = chosen.width,
-                height = chosen.height,
-                image = image,
-            ),
-            null,
+    ): CoverSlot {
+        val index = artistSlotIndex
+        return CoverSlot(
+            type = PictureTypeStandard.ARTIST,
+            label = "艺术家 ${index + 1}",
+            description = chosen.origin,
+            mime = "",
+            bytes = chosen.bytes?.size ?: 0,
+            width = chosen.width,
+            height = chosen.height,
+            image = image,
         )
+    }
 
     /** 用当前曲目搜索在线候选。 */
     fun searchOnline() {
@@ -2415,9 +2502,15 @@ object Repo {
             kotlinx.coroutines.coroutineScope {
                 usable.forEach { source ->
                     launch(Dispatchers.IO) {
+                        // 按专辑检索时用 ALBUM 排序：源返回的专辑名可能被本地化，
+                        // 标题相关性在这类结果上基本为 0，截断会退化为随机切。
                         val group =
                             try {
-                                aggregator.groupFor(source, query)
+                                aggregator.groupFor(
+                                    source,
+                                    query,
+                                    if (query.album.isNotBlank()) Aggregator.GroupRank.ALBUM else Aggregator.GroupRank.TITLE,
+                                )
                             } catch (t: Throwable) {
                                 null
                             }
@@ -2425,11 +2518,27 @@ object Repo {
                         // 不能套 level > 0 —— 那一层要求艺术家的中文/英文写法也兼容，
                         // 于是 iTunes 的「Pu Shu」对上本地的「朴树」会直接判 0，
                         // 封面正确却被丢弃。时长同理：Live 版封面通常就是同一张。
+                        //
+                        // 但**按专辑检索时连标题都不能要求**：同一张专辑的曲目共用封面，
+                        // 而源会把专辑名与曲名一起本地化 —— iTunes 把
+                        // 「君の名は。 / 前前前世」返回成「Your Name. / Dream Lantern」，
+                        // 标题与专辑名均无法匹配，字符串比较结果全为 0。
+                        // 检索已按专辑发出，改为接受「源解析出的那张专辑」的候选。
+                        val items = group?.items.orEmpty()
+                        val albumTarget =
+                            if (query.album.isNotBlank()) {
+                                CandidateScoring.dominantAlbum(items.map { it.candidate })
+                            } else {
+                                null
+                            }
                         val pool =
-                            group
-                                ?.items
-                                ?.filter { coverRelevant(query, it.candidate) }
-                                .orEmpty()
+                            items.filter {
+                                if (albumTarget != null) {
+                                    it.candidate.album == albumTarget
+                                } else {
+                                    coverRelevant(query, it.candidate)
+                                }
+                            }
                         Diag.log(
                             "covers: ${source.label} 搜索结果=" + (group?.items?.size ?: 0) +
                                 " 可下载=" + pool.size,
@@ -2940,6 +3049,10 @@ object Repo {
                 lyricist = fresh.lyricist,
                 composer = fresh.composer,
                 comment = fresh.comment,
+                replayGainTrackGain = fresh.replayGainTrackGain,
+                replayGainTrackPeak = fresh.replayGainTrackPeak,
+                replayGainAlbumGain = fresh.replayGainAlbumGain,
+                replayGainAlbumPeak = fresh.replayGainAlbumPeak,
                 path = meta.path,
                 durationMs = meta.durationMs,
                 readable = true,
@@ -2952,6 +3065,9 @@ object Repo {
                     loadCovers(updated)
                 }
             }
+            // 正在播放的曲目同样同步：侧栏直接读 [track]，不更新时看不到
+            // 文件独有字段（音轨号 / 作词 / 注释 / ReplayGain）。
+            if (track.key == meta.key) track = updated
             // 曲库列表里的那一行也同步刷新
             library =
                 library.map {
@@ -3190,40 +3306,69 @@ object Repo {
                         io.github.univers629.spwtagworkbench.backend.read.CoverMime
                             .asCover(it)
                     }
+                // 艺术家图（两个槽位各一张，都是 type=8）：必须和字段一起写进同一趟，
+                // 分两次写会在第二次把第一次的清掉。
+                //
+                // **按两个槽位的最终状态重建**：草稿里有的用草稿，没改的槽位沿用文件里的原图。
+                // 只提交一张会丢掉另一张，等于清空未改动的槽位。
+                //
+                // 每张都写 `SPW-ARTIST-N` 描述：ID3v2 要求同标签多图描述互不相同，
+                // 读取时也按描述把图归回原来的槽位。
+                val existingArtistPics =
+                    runCatching {
+                        CoverStore
+                            .readPictures(meta.path)
+                            .filter { it.type == PictureTypeStandard.ARTIST }
+                    }.getOrDefault(emptyList())
+                val unmarkedPics =
+                    existingArtistPics.filter { ArtistSlotMark.indexOf(it.description) == null }.toMutableList()
+                val existingBySlot =
+                    List(artistSlotCount) { index ->
+                        existingArtistPics.firstOrNull { ArtistSlotMark.indexOf(it.description) == index }
+                            ?: unmarkedPics.removeFirstOrNull()
+                    }
+                val artistArts =
+                    List(artistSlotCount) { index ->
+                        val staged = draft.artistCovers[index]?.readBytes()
+                        if (staged != null && staged.isNotEmpty()) {
+                            CoverMime.asCover(staged)?.copy(description = ArtistSlotMark.description(index))
+                        } else {
+                            existingBySlot[index]?.let { pic ->
+                                CoverArt(
+                                    bytes = pic.bytes,
+                                    mime = pic.mime,
+                                    description =
+                                        pic.description.ifBlank { ArtistSlotMark.description(index) },
+                                )
+                            }
+                        }
+                    }.filterNotNull()
                 // **只在确实有内容时才发这一次写入**。
                 // write() 对「patch 空且没有封面」返回失败（"没有要写入的字段"），
                 // 若照发不误，「只改艺术家图」会被这次空写入判成失败。
-                val hasPrimary = !patch.isEmpty || coverArt != null
+                val hasPrimary = !patch.isEmpty || coverArt != null || artistArts.isNotEmpty()
                 val outcome =
                     if (hasPrimary) {
                         AudioTagWriter.write(
                             track = backend,
                             patch = patch,
                             cover = coverArt,
+                            artistCovers = artistArts,
                             refreshHost = false,
                         )
                     } else {
-                        WriteOutcome(path = backend.path, ok = true, message = "只写艺术家图")
+                        WriteOutcome(path = backend.path, ok = true, message = "无变更")
                     }
-                // 艺术家图是第二张图（type=8），必须单独再写一次：
-                // 一次 write 只能带一张封面，类型也不同，合并会互相覆盖。
-                val artistOutcome =
-                    draft.artistCover?.readBytes()?.let { bytes ->
-                        io.github.univers629.spwtagworkbench.backend.read.CoverMime.asCover(bytes)?.let { art ->
-                            AudioTagWriter.writeCover(backend, art, pictureType = 8)
-                        }
-                    }
-                if (outcome.ok && (artistOutcome == null || artistOutcome.ok)) {
+                if (outcome.ok) {
                     ok++
                     withContext(Dispatchers.Main) { Drafts.markSaved(key) }
                 } else {
-                    val why = if (!outcome.ok) outcome.message else artistOutcome?.message.orEmpty()
                     // 必须落日志：这条失败原先只进状态栏，排查时只能靠猜
                     Diag.log(
-                        "save fail: ${meta.path.substringAfterLast('\\')} -> $why" +
-                            "（字段+封面=${outcome.ok} 艺术家图=${artistOutcome?.ok ?: "未涉及"}）",
+                        "save fail: ${meta.path.substringAfterLast('\\')} -> ${outcome.message}" +
+                            "（字段=${patch.entries.size} 艺术家图=${artistArts.size} 张）",
                     )
-                    failures += "${meta.path.substringAfterLast('\\')}：$why"
+                    failures += "${meta.path.substringAfterLast('\\')}：${outcome.message}"
                 }
             }
             // 3. 刷新音乐库 / 4. 重载当前播放歌词
