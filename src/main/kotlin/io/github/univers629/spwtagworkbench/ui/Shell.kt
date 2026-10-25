@@ -29,7 +29,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,16 +45,10 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
-import androidx.compose.ui.layout.LayoutModifier
-import androidx.compose.ui.layout.MeasureResult
-import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
-import com.xuncorp.voxzen.ui.navigation.AppNavigation
 import io.github.univers629.spwtagworkbench.core.Card
 import io.github.univers629.spwtagworkbench.core.Diag
 import io.github.univers629.spwtagworkbench.core.Glyph
@@ -95,55 +88,6 @@ private const val LibraryMs = 280
 /** 右侧侧栏面板：展开与收起必须对称（同时长、同曲线）。 */
 internal const val PanelMs = 300
 internal val PanelEase = CubicBezierEasing(0.20f, 0.80f, 0.16f, 1f)
-
-// ── 宿主内容：测量但不放置 ───────────────────────────────────────────────────
-
-private data class HostPlacement(
-    val hidden: Boolean,
-) : LayoutModifier {
-    override fun MeasureScope.measure(
-        measurable: androidx.compose.ui.layout.Measurable,
-        constraints: Constraints,
-    ): MeasureResult {
-        val child = measurable.measure(constraints)
-        return layout(child.width, child.height) {
-            if (!hidden) child.placeRelative(0, 0)
-        }
-    }
-}
-
-@Composable
-fun RetainedHostContent(
-    hidden: Boolean,
-    content: @Composable () -> Unit,
-) {
-    val focus = LocalFocusManager.current
-    LaunchedEffect(hidden) { if (hidden) focus.clearFocus(force = true) }
-    Box(Modifier.fillMaxSize().then(HostPlacement(hidden))) { content() }
-}
-
-// ── 宿主内容透传（replace 钩子的替换体） ─────────────────────────────────────
-//
-// **替换体只做一件事：把宿主内容画回去，或者按需不放置它。**
-//
-// 绝不在这里画插件自己的界面。原因：替换体一旦出问题，宿主内容区会整体失效 ——
-// 设置页卡在加载、导航点不动都由此而来。把插件 UI 放进 append 钩子，替换体失败
-// 最多是材质透不出来，宿主始终可用。
-
-@Composable
-fun HostPassthrough() {
-    // 进入替换体就记一次：看门狗据此区分「宿主没调用替换体」和
-    // 「调用了但组合中途抛异常」，两者的处理策略不同。
-    //
-    // 这里不能 try/catch 包住下面的 composable 调用（Compose 编译器不支持），
-    // 所以只记次数；组合真出错时宿主会吞掉异常，看门狗看到「进过组合但没存活」
-    // 就按失败处理。
-    ShellState.replaceInvocations += 1
-    RetainedHostContent(hidden = ShellState.onScreen) { AppNavigation() }
-    // 存活标记放在最后：整个组合体走完才置位。
-    // 中途抛异常则不置位，看门狗会关掉替换、让宿主自绘。
-    SideEffect { ShellState.replaceAlive = true }
-}
 
 // ── 插件自己的界面（append 钩子） ────────────────────────────────────────────
 
@@ -241,7 +185,11 @@ private fun pageBackground(
 // ── 宽视图外壳 ───────────────────────────────────────────────────────────────
 
 @Composable
-private fun WideView(onOpenLog: () -> Unit) {
+internal fun WideView(
+    onOpenLog: () -> Unit,
+    onClose: () -> Unit = { SpaceRouter.closeShell() },
+    embedded: Boolean = false,
+) {
     val progress = ShellState.progress
     val anchor = remember { SpaceMetrics.anchor() ?: SpaceMetrics.fab() }
     var selfOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -342,11 +290,11 @@ private fun WideView(onOpenLog: () -> Unit) {
                     sourcesOpen = sourcesOpen,
                     onToggleSources = { sourcesOpen = !sourcesOpen },
                     onOpenLog = onOpenLog,
-                    onClose = { SpaceRouter.closeShell() },
+                    onClose = onClose,
                 )
                 // 中间页底部留出宿主播放条高度：宿主底栏浮在内容之上，不留就被遮挡。
                 // 两个侧栏（曲库列 / 右侧面板）贴满高度，不受影响。
-                val reservedDp = remember { Host.miniPlayerReservedDp() }
+                val reservedDp = if (embedded) 0 else remember { Host.miniPlayerReservedDp() }
                 Diag.logOnce("mini-player-inset", "底栏预留高度=" + reservedDp + "dp")
                 Box(
                     Modifier
