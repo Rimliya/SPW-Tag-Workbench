@@ -2,15 +2,8 @@
   "configs": [
     {
       "title": "音乐标签工作台",
-      "config": "config.json",
+      "config": "tag-workbench.json",
       "preferences": [
-        {
-          "type": "button",
-          "title": "打开音乐标签工作台",
-          "summary": "进入工作台主视图：批量处理匹配歌词、匹配封面、匹配艺术家，查看歌曲频谱、逐字打轴等",
-          "arrow_type": "arrow",
-          "on_click": "io.github.univers629.spwtagworkbench.MainPlugin.openWorkbench"
-        },
         {
           "type": "list",
           "key": "matching.policy",
@@ -43,13 +36,6 @@
         },
         {
           "type": "switch",
-          "key": "sidebar.rail",
-          "title": "显示侧栏悬浮按钮",
-          "summary": "窗口右侧的全局侧边栏召唤按钮",
-          "default": true
-        },
-        {
-          "type": "switch",
           "key": "view.showArtistSlots",
           "title": "工作台主视图显示艺术家封面",
           "summary": "关闭后主封面下方不再显示艺术家封面槽位",
@@ -60,7 +46,7 @@
           "title": "开源项目",
           "summary": "查看源代码、使用说明与问题反馈",
           "arrow_type": "arrow",
-          "on_click": "io.github.univers629.spwtagworkbench.MainPlugin.openSourcePage"
+          "on_click": "io.github.univers629.spwtagworkbench.EmbeddedWorkbenchRuntime.openSourcePage"
         }
       ]
     }

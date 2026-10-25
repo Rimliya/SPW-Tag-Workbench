@@ -53,6 +53,14 @@ object EmbeddedWorkbenchRuntime {
         SpaceRouter.hardReset()
         started = false
     }
+
+    @JvmStatic
+    fun openSourcePage() {
+        runCatching {
+            check(java.awt.Desktop.isDesktopSupported()) { "系统不支持打开浏览器" }
+            java.awt.Desktop.getDesktop().browse(java.net.URI.create("https://github.com/Rimliya/SPW-Tag-Workbench"))
+        }
+    }
 }
 
 /** Full workbench UI with no sidebar/FAB and no host AppNavigation replacement. */

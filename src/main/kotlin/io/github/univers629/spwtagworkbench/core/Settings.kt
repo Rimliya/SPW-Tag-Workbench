@@ -83,7 +83,7 @@ object Settings {
         runCatching {
             val manager = WorkshopApi.manager.createConfigManager()
             // 与 preference_config.json 里声明的 config 文件名一致
-            val config = manager.getConfig("config.json").also { runCatching { it.reload() } }
+            val config = manager.getConfig("tag-workbench.json").also { runCatching { it.reload() } }
             helper = config
             read(config)
             if (!listenerRegistered) {
