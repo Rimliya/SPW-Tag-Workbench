@@ -145,7 +145,7 @@ class MainPlugin(
         installTopLevelSidebar()
         // 只在宿主有窗口材质时接管内容区。
         // windowStyle=None（Win10）时替换没有收益，却会让宿主自己的页面（设置/模组管理）
-        // 在"替换 → 看门狗关闭 → 恢复自绘"的一轮里跑到坏掉的组合树上，表现为一直加载。
+        // 在"替换 → 看门狗关闭 → 恢复自绘"的一轮里跑到坏掉的组合树上，界面卡在加载态。
         val materialAvailable = io.github.univers629.spwtagworkbench.core.Host.windowStyle != "None"
         if (materialAvailable) {
             if (tryInstallReplace()) startReplaceWatchdog()

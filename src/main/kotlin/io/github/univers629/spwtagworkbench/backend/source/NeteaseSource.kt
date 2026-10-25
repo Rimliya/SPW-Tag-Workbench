@@ -7,6 +7,8 @@ import io.github.univers629.spwtagworkbench.backend.lyrics.LyricsFormat
 import io.github.univers629.spwtagworkbench.backend.net.Http
 import io.github.univers629.spwtagworkbench.backend.net.Json
 import io.github.univers629.spwtagworkbench.core.Diag
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 网易云音乐（公开检索接口）。
@@ -37,7 +39,7 @@ class NeteaseSource : MusicSource {
 
         // 必须用 cloudsearch/pc（POST 表单）：
         // 老的 /api/search/get/web 返回的 album 里只有 picId、**没有 picUrl**，
-        // 封面根本取不到。新接口读的是 al.picUrl。
+        // 封面取不到。新接口读的是 al.picUrl。
         val form = "s=" + enc(keyword) + "&type=1&offset=0&limit=30"
         val response =
             Http.postForm(
@@ -69,12 +71,15 @@ class NeteaseSource : MusicSource {
                 val album = albumObj?.str("name").orEmpty()
                 val durationMs = song.num("dt")?.toLong() ?: song.num("duration")?.toLong() ?: 0L
                 val artwork = coverUrl(albumObj?.str("picUrl"))
-                // 艺术家图：新接口是 ar[].img1v1Url，老接口在 album.artist.img1v1Url
-                val artistArt =
-                    coverUrl(
-                        singerObj?.str("img1v1Url")
-                            ?: albumObj?.obj("artist")?.str("img1v1Url"),
-                    )
+                // 艺术家图**不在搜索响应里**：新版 cloudsearch 的 ar[] 只有
+                // name / tns / alias / id / alia 五个键，没有任何图片字段。
+                // 只保留 artistId，等真正要下载时再打艺术家详情端点（见 artistCover）。
+                val artistId = singerObj
+                    ?.num("id")
+                    ?.toLong()
+                    ?.toLong()
+                    .toString()
+                    .orEmpty()
                 SourceCandidate(
                     sourceId = this.id,
                     sourceLabel = label,
@@ -88,7 +93,7 @@ class NeteaseSource : MusicSource {
                     // 优先取 yrc（逐字）；取不到会退回 lrc，界面标记随后由内容校正
                     lyricFormat = "yrc",
                     artworkUrl = artwork,
-                    artistArtworkUrl = artistArt,
+                    artistId = artistId,
                 )
             }
         Diag.log(
@@ -105,7 +110,7 @@ class NeteaseSource : MusicSource {
      *
      * **不改 scheme**。Lyrico 插件强制 https 是因为 Android 默认禁明文流量（cleartext），
      * 桌面 JVM 没有这个限制；实测 http 反而快 70~100ms（省 TLS 握手），
-     * 而酷我的 CDN（`img1.kwcdn.kuwo.cn`）**根本不支持 https**，强改会全挂。
+     * 而酷我的 CDN（`img1.kwcdn.kuwo.cn`）**不支持 https**，强改会导致全部请求失败。
      */
     private fun coverUrl(raw: String?): String {
         val url = raw?.trim().orEmpty()
@@ -132,17 +137,67 @@ class NeteaseSource : MusicSource {
     /**
      * 艺术家图。
      *
-     * 网易云的艺人图是方形的 `img1v1Url`（头像风格），实测 640×420；
-     * 服务端不认 `?param=` 放大，所以只能原样下。
+     * 搜索响应里**没有**艺人图（`ar[]` 只有 name / tns / alias / id / alia），
+     * 要拿 [SourceCandidate.artistId] 打一次艺术家详情端点。
+     *
+     * 这次往返只在**真正要下载**时发生，封面页不受影响；
+     * 结果按艺术家 id 缓存 —— 同一艺人的多首歌共用一张图，第二次是纯内存命中。
      */
     override suspend fun artistCover(candidate: SourceCandidate): ByteArray? {
-        val url = candidate.artistArtworkUrl
-        if (url.isBlank()) return null
+        val url =
+            candidate.artistArtworkUrl.ifBlank {
+                resolveArtistImage(candidate.artistId) ?: return null
+            }
         val bytes =
             Http.getBytes(url, timeoutMs = 9000)
                 ?: return null
         return bytes.takeIf { looksLikeImage(it) }
     }
+
+    /**
+     * 用艺术家 id 换艺人图地址，带缓存。
+     *
+     * 端点选 `/api/artist/{id}`：`/api/v1/artist/{id}` 内容相同但响应更大，
+     * 而 `/api/artist/head/info/get` 只有 4KB 却**没有图片字段**，用不了。
+     *
+     * **同一个 artistId 的并发请求共用一次往返**：艺人图页会为同一艺人的多首歌
+     * 并发下载，只查缓存会全部落空（缓存踩踏）—— 实测 5 个候选发了 5 次相同请求。
+     * 这里用 per-id 互斥锁 + 锁内二次检查：后到的调用直接命中缓存。
+     */
+    private suspend fun resolveArtistImage(artistId: String): String? {
+        if (artistId.isBlank()) return null
+        artistImageCache[artistId]?.let { return it.ifBlank { null } }
+
+        val mutex = artistImageLocks.computeIfAbsent(artistId) { Mutex() }
+        return mutex.withLock {
+            artistImageCache[artistId]?.let { return@withLock it.ifBlank { null } }
+
+            val response =
+                runCatching {
+                    Http.get(
+                        url = "https://music.163.com/api/artist/$artistId",
+                        headers = headers,
+                        timeoutMs = 9000,
+                    )
+                }.getOrNull()
+            val url =
+                response
+                    ?.takeIf { it.ok }
+                    ?.let { Json.parse(it.body)?.obj("artist") }
+                    ?.let { coverUrl(it.str("img1v1Url")) ?: coverUrl(it.str("picUrl")) }
+                    .orEmpty()
+
+            artistImageCache[artistId] = url
+            Diag.log("netease: 艺术家 $artistId 图片=${if (url.isBlank()) "无" else url.takeLast(28)}")
+            url.ifBlank { null }
+        }
+    }
+
+    /** 艺术家 id → 艺人图地址；空串表示查过但没有。 */
+    private val artistImageCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** 艺术家 id → 该 id 的查询锁，保证同一 id 只发一次请求。 */
+    private val artistImageLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
 
     /** 简单嗅探：非图片响应（错误页、占位图）不要写进文件。 */
     private fun looksLikeImage(b: ByteArray): Boolean {
@@ -157,7 +212,7 @@ class NeteaseSource : MusicSource {
         val response =
             Http.get(
                 url = "https://music.163.com/api/song/lyric",
-                // **`yv=-1` 是逐字（yrc）的开关**：只传 lv/kv/tv 时响应里根本没有 yrc 字段，
+                // **`yv=-1` 是逐字（yrc）的开关**：只传 lv/kv/tv 时响应里没有 yrc 字段，
                 // 于是永远回落到逐行 LRC。`rv`/`yrv` 用于带出 romalrc（罗马音）。
                 query =
                     mapOf(

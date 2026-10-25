@@ -73,6 +73,14 @@ data class SourceCandidate(
      * （3 = Front Cover，8 = Artist）。QQ 和酷狗都能给到 1200px 以上的艺人图。
      */
     val artistArtworkUrl: String = "",
+    /**
+     * 源内的**艺术家 ID**。
+     *
+     * 有些源的搜索响应里没有艺人图地址（网易云的 `ar[]` 只给 id 和 name），
+     * 要另外打一次艺术家详情端点才能拿到。这里保留 id，让 [MusicSource.artistCover]
+     * 在**真正要下载时**才去解析 —— 封面页不需要艺人图，不该为此付这次往返。
+     */
+    val artistId: String = "",
     /** 发行年份，0 表示未知。iTunes 给日期串、QQ 给 Unix 时间戳、酷狗给 `yyyy-MM-dd`。 */
     val year: Int = 0,
     /** 风格 / 流派，空表示未知（目前只有 iTunes 给）。 */
@@ -93,7 +101,7 @@ data class SourceCandidate(
      *
      * QQ 是典型：逐行 LRC 走 `fcg_query_lyric_new.fcg` 只认 `songmid`（字母串，即 [remoteId]），
      * 而逐字 QRC 走 `musicu.fcg GetPlayLyricInfo` 只认数字 `songID`。
-     * 只存一个会让另一半接口永远失败——实测表现为「QQ 歌词始终只有逐行」。
+     * 只存一个会让另一半接口始终失败，QQ 歌词只能取到逐行。
      */
     val altId: String = "",
 ) {

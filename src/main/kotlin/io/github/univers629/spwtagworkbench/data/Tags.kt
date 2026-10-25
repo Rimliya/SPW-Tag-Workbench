@@ -20,7 +20,15 @@ import java.io.File
  * 这里只负责「字段枚举映射」和「路径 → 统一模型」的转换。
  */
 object Tags {
-    /** UI 侧的可编辑字段，与后端 [TagField] 一一对应。 */
+    /**
+     * UI 侧的可编辑字段，与后端 [TagField] 一一对应。
+     *
+     * **顺序即界面顺序**，沿用 legacy 版（Swing）元数据区的排列：
+     * 标题 / 艺术家 / 专辑 / 年份 / 音轨号 / 风格 / 专辑艺术家 / 作曲家 / 作词家 / 注释。
+     * 音轨号与碟号在界面上共用一行，但这里仍是两个独立字段。
+     *
+     * 标签文字也与 legacy 对齐（「风格」而非「流派」、「作词家」而非「作词」）。
+     */
     enum class Key(
         val label: String,
         val field: TagField,
@@ -28,9 +36,20 @@ object Tags {
         Title("标题", TagField.Title),
         Artist("艺术家", TagField.Artist),
         Album("专辑", TagField.Album),
-        AlbumArtist("专辑艺术家", TagField.AlbumArtist),
-        Genre("流派", TagField.Genre),
         Year("年份", TagField.Year),
+        Track("音轨号", TagField.Track),
+        Disc("碟号", TagField.Disc),
+        Genre("风格", TagField.Genre),
+        AlbumArtist("专辑艺术家", TagField.AlbumArtist),
+        Composer("作曲家", TagField.Composer),
+        Lyricist("作词家", TagField.Lyricist),
+        Comment("注释", TagField.Comment),
+        ;
+
+        companion object {
+            /** 「套用到同专辑」写入的字段：只套用专辑级信息，不动单曲独有的字段。 */
+            val ALBUM_LEVEL: List<Key> = listOf(Album, AlbumArtist, Genre, Year)
+        }
     }
 
     data class Result(
@@ -127,6 +146,39 @@ object Tags {
         val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
         val cover = CoverMime.asCover(bytes) ?: return Result(false, "艺术家图数据为空")
         val outcome = AudioTagWriter.writeCover(track, cover, pictureType = 8)
+        return Result(outcome.ok, decorate(outcome.message, outcome.hostRefreshed))
+    }
+
+    // ── ReplayGain ──────────────────────────────────────────────────────────
+
+    /**
+     * 写入 ReplayGain 的若干键（空串表示删除该键）。
+     *
+     * 键名与取值格式由 ReplayGain 2.0 规范固定，[ReplayGainService] 负责计算与格式化；
+     * 这里只做「路径 → 调用写盘」的转发，保持与其它写入方法同一层。
+     */
+    fun writeReplayGain(
+        path: String,
+        values: Map<TagField, String>,
+        reloadLyricsForId: String? = null,
+    ): Result {
+        val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
+        if (values.isEmpty()) return Result(true, "没有要写入的增益数据")
+        val patch = TagPatch()
+        for ((field, value) in values) {
+            require(field.isReplayGain) { "$field 不是 ReplayGain 字段" }
+            patch.set(field, value)
+        }
+        val outcome = AudioTagWriter.write(track, patch, reloadLyricsForId = reloadLyricsForId)
+        return Result(outcome.ok, decorate(outcome.message, outcome.hostRefreshed))
+    }
+
+    /** 清除四个 ReplayGain 键（写空值即删除）。 */
+    fun clearReplayGain(path: String): Result {
+        val track = ensureTrack(path) ?: return Result(false, "文件不存在或不可读")
+        val patch = TagPatch()
+        for (field in TagField.replayGainFields) patch.set(field, "")
+        val outcome = AudioTagWriter.write(track, patch)
         return Result(outcome.ok, decorate(outcome.message, outcome.hostRefreshed))
     }
 

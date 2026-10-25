@@ -235,6 +235,8 @@ object ApeV2 {
         const val DISC = "Disc"
         const val COMMENT = "Comment"
         const val LYRICS = "Lyrics"
+        const val LYRICIST = "Lyricist"
+        const val COMPOSER = "Composer"
         const val COVER_FRONT = "Cover Art (Front)"
     }
 

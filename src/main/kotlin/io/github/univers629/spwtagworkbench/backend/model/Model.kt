@@ -23,9 +23,24 @@ data class Track(
     val disc: String = "",
     val lyrics: String = "",
     val comment: String = "",
+    /** 作词。ID3v2 是 `TEXT`，Vorbis / APEv2 是自由键。 */
+    val lyricist: String = "",
+    /** 作曲。ID3v2 是 `TCOM`。 */
+    val composer: String = "",
     val durationMs: Long = 0L,
     val bitDepth: String = "",
     val bitrate: String = "",
+    /**
+     * ReplayGain 四个标签的原始文本（文件里怎么写就怎么存）。
+     *
+     * 保留原文而不解析成数值：一是格式容错由消费方决定（规范要求播放器容忍
+     * 前导 `+`、多余位数、大小写变体），二是没写过这些标签的文件应当是空串，
+     * 与「算出来是 0」区分得开。
+     */
+    val replayGainTrackGain: String = "",
+    val replayGainTrackPeak: String = "",
+    val replayGainAlbumGain: String = "",
+    val replayGainAlbumPeak: String = "",
     /** 文件是否可读（宿主标记 + 实际探测）。 */
     val readable: Boolean = true,
     /** 文件里是否有内嵌封面（字节不进列表模型）。 */
@@ -34,31 +49,62 @@ data class Track(
     val key: String get() = id.ifEmpty { path }
     val hasFile: Boolean get() = path.isNotEmpty() && readable
 
+    /** 是否已带 ReplayGain 数据（四个键里至少音轨增益有值）。 */
+    val hasReplayGain: Boolean get() = replayGainTrackGain.isNotBlank()
+
     companion object {
         val Empty = Track(id = "", path = "")
     }
 }
 
-/** 可写入的标签字段。顺序即 UI 展示顺序。 */
+/**
+ * 可写入的标签字段。顺序即 UI 展示顺序。
+ *
+ * [tagKey] 是该字段在**自由键体系**里的名字（Vorbis comment / APEv2）：
+ * 这两套体系直接按字符串键名写，不需要帧映射表。
+ * 普通文本字段填的是各自的惯用键名，ReplayGain 字段填的是规范规定的四个键。
+ *
+ * ID3v2 里的落法不同：普通字段用固定帧 ID，ReplayGain 用 `TXXX` + 描述符，
+ * 描述符就是 [tagKey]。
+ */
 enum class TagField(
     val label: String,
+    val tagKey: String,
+    /** ReplayGain 字段：走 `TXXX` / 自由键，不参与普通文本帧映射。 */
+    val isReplayGain: Boolean = false,
 ) {
-    Title("标题"),
-    Artist("艺术家"),
-    Album("专辑"),
-    AlbumArtist("专辑艺术家"),
-    Genre("风格"),
-    Year("年份"),
-    Track("音轨号"),
-    Disc("碟号"),
-    Lyricist("作词"),
-    Composer("作曲家"),
-    Comment("注释"),
-    Lyrics("歌词"),
+    Title("标题", "TITLE"),
+    Artist("艺术家", "ARTIST"),
+    Album("专辑", "ALBUM"),
+    AlbumArtist("专辑艺术家", "ALBUMARTIST"),
+    Genre("风格", "GENRE"),
+    Year("年份", "DATE"),
+    Track("音轨号", "TRACKNUMBER"),
+    Disc("碟号", "DISCNUMBER"),
+    Lyricist("作词", "LYRICIST"),
+    Composer("作曲家", "COMPOSER"),
+    Comment("注释", "COMMENT"),
+    Lyrics("歌词", "LYRICS"),
+
+    // ReplayGain 2.0 的四个键，键名与取值格式由规范固定：
+    // 增益形如 `-9.38 dB`，峰值形如 `0.999900`（1.0 = 满刻度）。
+    // 规范另有 REPLAYGAIN_REFERENCE_LOUDNESS，但被明确标为「有害」
+    // （标准只有一个参考目标，改参考应在播放器侧做），因此不写。
+    ReplayGainTrackGain("音轨增益", "REPLAYGAIN_TRACK_GAIN", isReplayGain = true),
+    ReplayGainTrackPeak("音轨峰值", "REPLAYGAIN_TRACK_PEAK", isReplayGain = true),
+    ReplayGainAlbumGain("专辑增益", "REPLAYGAIN_ALBUM_GAIN", isReplayGain = true),
+    ReplayGainAlbumPeak("专辑峰值", "REPLAYGAIN_ALBUM_PEAK", isReplayGain = true),
     ;
 
     companion object {
-        val textFields: List<TagField> get() = entries.filter { it != Lyrics }
+        /** 可自由编辑的文本字段（不含歌词与 ReplayGain）。 */
+        val textFields: List<TagField> get() = entries.filter { it != Lyrics && !it.isReplayGain }
+
+        /** ReplayGain 的四个字段，按展示顺序。 */
+        val replayGainFields: List<TagField> get() = entries.filter { it.isReplayGain }
+
+        /** 按自由键名找字段；找不到返回 null。键名忽略大小写。 */
+        fun byTagKey(key: String): TagField? = entries.firstOrNull { it.tagKey.equals(key, ignoreCase = true) }
     }
 }
 
@@ -125,6 +171,10 @@ class TagPatch {
                         TagField.Composer -> ""
                         TagField.Comment -> track.comment
                         TagField.Lyrics -> track.lyrics
+                        TagField.ReplayGainTrackGain -> track.replayGainTrackGain
+                        TagField.ReplayGainTrackPeak -> track.replayGainTrackPeak
+                        TagField.ReplayGainAlbumGain -> track.replayGainAlbumGain
+                        TagField.ReplayGainAlbumPeak -> track.replayGainAlbumPeak
                     }
                 if (value.isNotEmpty()) patch.set(field, value)
             }

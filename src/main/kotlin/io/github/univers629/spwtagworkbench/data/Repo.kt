@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import com.xuncorp.spw.workshop.api.PlaybackExtensionPoint
 import com.xuncorp.spw.workshop.api.WorkshopApi
+import io.github.univers629.spwtagworkbench.backend.audio.ReplayGainScanner
 import io.github.univers629.spwtagworkbench.backend.audio.Spectrogram
 import io.github.univers629.spwtagworkbench.backend.host.HostBridge
 import io.github.univers629.spwtagworkbench.backend.host.PlaybackSignal
@@ -24,6 +25,7 @@ import io.github.univers629.spwtagworkbench.backend.read.CoverStore
 import io.github.univers629.spwtagworkbench.backend.read.EmbeddedPicture
 import io.github.univers629.spwtagworkbench.backend.read.PictureTypeStandard
 import io.github.univers629.spwtagworkbench.backend.source.Aggregator
+import io.github.univers629.spwtagworkbench.backend.source.CandidateScoring
 import io.github.univers629.spwtagworkbench.backend.source.Capability
 import io.github.univers629.spwtagworkbench.backend.source.ItunesSource
 import io.github.univers629.spwtagworkbench.backend.source.KugouSource
@@ -269,7 +271,7 @@ object Repo {
     /**
      * 直接改写某一行的行首/行尾时间（毫秒）。
      *
-     * 打轴页右栏「行」那一块用的是它：用户看到的是**真实秒数**，
+     * 打轴页右栏「行」那一块用的是它：该值是**真实秒数**，
      * 加减号与输入框都是直接改这个值，而不是偏移量。
      * 传 -1 表示未标记。
      */
@@ -570,7 +572,7 @@ object Repo {
      *
      * 与 [cover]（预览）严格分开：勾选只改这里。
      * 存 id 而不是对象 —— 候选列表会随各来源流式返回被整体重建，存对象会丢勾选，
-     * 表现就是「网络候选勾不上」。
+     * 结果是网络候选勾不上。
      */
     var selectedCoverId by mutableStateOf<String?>(null)
         private set
@@ -770,7 +772,7 @@ object Repo {
                 // 但曲库是全局数据，与「当前编辑哪首」无关：bootstrap 发起的查询
                 // 途中宿主推送了 onAfterLoadLyrics（onTrackChanged → invalidateAll →
                 // online++），token 作废，返回的 39 首被静默丢弃 —— 新装宿主上
-                // 表现为「曲库列表是空的」（本机日志 epoch: invalidateAll -> online=2
+                // 曲库列表于是是空的（本机日志 epoch: invalidateAll -> online=2
                 // 正是证据）。切歌不该清曲库。
                 //
                 // 停用场景不需要 token：shutdown 里 scope.cancel() 已把本协程取消。
@@ -911,6 +913,10 @@ object Repo {
         cover = null
         clearCandidates()
         spectrum = SpectrumState.Idle
+        // 测量结果与「文件里已有的增益」都属于上一首，不清会显示成新歌的
+        replayGainMeasured = null
+        replayGainState = GainState.Idle
+        replayGainExisting = ReplayGainValues()
         // 换了编辑对象就把播放游标清掉：
         // 否则新歌第一帧会带着上一首的位置，谱轴播放头与行高亮都错位。
         positionMs = 0L
@@ -931,6 +937,11 @@ object Repo {
         spectrogram = SpectrogramState.Idle
         loadLyrics(meta)
         loadCovers(meta)
+        // 宿主的曲库不带音轨号 / 碟号 / 作词 / 作曲 / 注释，这几个字段只有文件里有。
+        // 这里补读一次，否则编辑区那几行永远是空的（歌词与封面上面已经触发过，不重复读）。
+        if (meta.hasFile) {
+            scope.launch { refreshFocusedFromDisk(meta, reloadContent = false) }
+        }
     }
 
     /** 当前界面聚焦的曲目：优先用户手选，否则跟随正在播放。 */
@@ -1263,7 +1274,7 @@ object Repo {
      * - 标题只是相似（level 3~4）→ 还要求艺术家兼容。
      *
      * 这样 iTunes 用英文艺人名（Pu Shu 对 朴树）也能给出正确封面，
-     * 同时挡掉「标题相似但其实是另一首歌」的图。
+     * 同时挡掉「标题相似但实为另一首歌」的图。
      */
     private fun coverRelevant(
         query: SearchQuery,
@@ -1615,6 +1626,11 @@ object Repo {
                     Tags.Key.AlbumArtist -> meta.copy(albumArtist = value)
                     Tags.Key.Genre -> meta.copy(genre = value)
                     Tags.Key.Year -> meta.copy(year = value)
+                    Tags.Key.Track -> meta.copy(track = value)
+                    Tags.Key.Disc -> meta.copy(disc = value)
+                    Tags.Key.Composer -> meta.copy(composer = value)
+                    Tags.Key.Lyricist -> meta.copy(lyricist = value)
+                    Tags.Key.Comment -> meta.copy(comment = value)
                 }
             if (selected?.key == meta.key) selected = updated
             if (track.key == meta.key) track = updated
@@ -1767,15 +1783,15 @@ object Repo {
             patchFor = { track ->
                 val patch = TagPatch()
                 for (key in fields) {
+                    // 只套用专辑级字段。单曲独有的（标题、艺术家、音轨号、碟号、
+                    // 作词、作曲、注释）在整张专辑里各不相同，套用会把它们抹平成同一份。
                     val value =
                         when (key) {
-                            Tags.Key.Title -> ""
-                            // 标题不批量套用
-                            Tags.Key.Artist -> source.artist
                             Tags.Key.Album -> source.album
                             Tags.Key.AlbumArtist -> source.albumArtist
                             Tags.Key.Genre -> source.genre
                             Tags.Key.Year -> source.year
+                            else -> ""
                         }
                     if (value.isNotBlank()) patch.set(key.field, value)
                 }
@@ -1816,6 +1832,196 @@ object Repo {
     /** 只有写的是正在播放的歌，才需要重载宿主歌词。 */
     private fun lyricReloadTarget(meta: TrackMeta): String? =
         if (meta.key.isNotEmpty() && meta.key == track.key) meta.id.ifEmpty { null } else null
+
+    // ── 回放增益 ─────────────────────────────────────────────────────────────
+
+    /**
+     * 当前曲目**文件里已有**的 ReplayGain 值。
+     *
+     * 与 [replayGainMeasured] 分开：一个是「文件里写的」，一个是「刚测的」。
+     * 混在一起的话，测完但还没写入时界面就分不清哪个是真的落盘了。
+     */
+    var replayGainExisting by mutableStateOf(ReplayGainValues())
+        private set
+
+    /** 最近一次测量的结果；切换曲目时清空。 */
+    var replayGainMeasured by mutableStateOf<ReplayGainScanner.TrackScan?>(null)
+        private set
+
+    /** 测量状态。 */
+    var replayGainState by mutableStateOf<GainState>(GainState.Idle)
+        private set
+
+    /** 四个键的原始文本；空串表示文件里没有。 */
+    data class ReplayGainValues(
+        val trackGain: String = "",
+        val trackPeak: String = "",
+        val albumGain: String = "",
+        val albumPeak: String = "",
+    ) {
+        val present: Boolean get() = trackGain.isNotBlank() || albumGain.isNotBlank()
+    }
+
+    /** 测量状态机。 */
+    sealed interface GainState {
+        data object Idle : GainState
+
+        data class Measuring(
+            val progress: Float,
+        ) : GainState
+
+        data class Measured(
+            val scan: ReplayGainScanner.TrackScan,
+        ) : GainState
+
+        data class Failed(
+            val reason: String,
+        ) : GainState
+    }
+
+    /**
+     * 进频谱页时调用：**先读文件里已有的值，没有才测**。
+     *
+     * 两个理由：
+     * - 已有值就是播放器实际会用的值，直接显示比重新测一遍更有意义
+     * - 每次进页都重测的话，翻二十首就白烧十秒 CPU
+     *
+     * **只测不写**：写入必须由 [applyMeasuredReplayGain] 显式触发。
+     */
+    fun prepareReplayGain() {
+        val meta = focused()
+        if (!meta.hasFile) {
+            replayGainExisting = ReplayGainValues()
+            replayGainMeasured = null
+            replayGainState = GainState.Idle
+            return
+        }
+        refreshReplayGain()
+        // 已有数据时跳过测量
+        if (replayGainExisting.present) return
+        if (replayGainState is GainState.Measuring) return
+        measureReplayGain()
+    }
+
+    /** 读当前曲目文件里已有的 ReplayGain 值（切歌 / 写完标签后调用）。 */
+    fun refreshReplayGain() {
+        val meta = focused()
+        if (!meta.hasFile) {
+            replayGainExisting = ReplayGainValues()
+            replayGainMeasured = null
+            replayGainState = GainState.Idle
+            return
+        }
+        val trackFile = runCatching { Tags.read(meta.path) }.getOrNull()
+        replayGainExisting =
+            if (trackFile == null) {
+                ReplayGainValues()
+            } else {
+                ReplayGainValues(
+                    trackGain = trackFile.replayGainTrackGain,
+                    trackPeak = trackFile.replayGainTrackPeak,
+                    albumGain = trackFile.replayGainAlbumGain,
+                    albumPeak = trackFile.replayGainAlbumPeak,
+                )
+            }
+    }
+
+    /**
+     * 测量当前曲目。
+     *
+     * **只测不写**：结果落在 [replayGainMeasured]，界面展示后再由
+     * [applyMeasuredReplayGain] 决定是否落盘。测量要解码整首歌，
+     * 直接写盘会让用户没有反悔的机会。
+     */
+    fun measureReplayGain() {
+        val meta = focused()
+        if (!meta.hasFile) {
+            postStatus(Status("没有可测量的曲目", Status.Kind.Warn))
+            return
+        }
+        if (replayGainState is GainState.Measuring) return
+        val path = meta.path
+        val key = meta.key
+        replayGainMeasured = null
+        replayGainState = GainState.Measuring(0f)
+        postStatus(Status("正在测量响度：${meta.title.ifBlank { meta.path.substringAfterLast('\\') }}…", Status.Kind.Busy))
+
+        scope.launch {
+            val scan =
+                ReplayGainScanner.scan(path, truePeak = false) { progress ->
+                    postOnMain { if (focused().key == key) replayGainState = GainState.Measuring(progress) }
+                }
+            postOnMain {
+                // 测完时用户可能已经切歌，结果不该落到别的曲目上
+                if (focused().key != key) return@postOnMain
+                if (scan.ok) {
+                    replayGainMeasured = scan
+                    replayGainState = GainState.Measured(scan)
+                    postStatus(
+                        Status(
+                            "响度 ${"%.2f".format(scan.integratedLufs)} LUFS，增益 ${scan.gainText()}（未写入）",
+                            Status.Kind.Ok,
+                        ),
+                    )
+                } else {
+                    replayGainState = GainState.Failed(scan.error.orEmpty())
+                    postStatus(Status("测量失败：${scan.error}", Status.Kind.Error))
+                }
+            }
+        }
+    }
+
+    /** 把当前测量结果写入标签（音轨增益 + 音轨峰值）。 */
+    fun applyMeasuredReplayGain() {
+        val meta = focused()
+        val scan = replayGainMeasured
+        if (scan == null || !scan.ok) {
+            postStatus(Status("先测量再写入", Status.Kind.Warn))
+            return
+        }
+        if (!meta.hasFile) {
+            postStatus(Status("曲目没有可写文件", Status.Kind.Error))
+            return
+        }
+        val key = meta.key
+        scope.launch {
+            val result =
+                Tags.writeReplayGain(
+                    meta.path,
+                    mapOf(
+                        TagField.ReplayGainTrackGain to scan.gainText(),
+                        TagField.ReplayGainTrackPeak to scan.peakText(),
+                    ),
+                )
+            postOnMain {
+                postStatus(Status(result.message, if (result.ok) Status.Kind.Ok else Status.Kind.Error))
+                if (result.ok) {
+                    if (focused().key == key) refreshReplayGain()
+                }
+            }
+        }
+    }
+
+    /** 清除当前曲目的四个 ReplayGain 键。 */
+    fun clearReplayGainTag() {
+        val meta = focused()
+        if (!meta.hasFile) {
+            postStatus(Status("曲目没有可写文件", Status.Kind.Error))
+            return
+        }
+        val key = meta.key
+        scope.launch {
+            val result = Tags.clearReplayGain(meta.path)
+            postOnMain {
+                postStatus(Status(result.message, if (result.ok) Status.Kind.Ok else Status.Kind.Error))
+                if (result.ok) {
+                    replayGainMeasured = null
+                    replayGainState = GainState.Idle
+                    if (focused().key == key) refreshReplayGain()
+                }
+            }
+        }
+    }
 
     // ── 在线聚合源 ───────────────────────────────────────────────────────────
     private val itunes = ItunesSource()
@@ -1858,14 +2064,36 @@ object Repo {
             kotlinx.coroutines.coroutineScope {
                 usable.forEach { source ->
                     launch(Dispatchers.IO) {
-                        val group = runCatching { aggregator.groupFor(source, query) }.getOrNull()
-                        // 与封面页同样的放宽逻辑：只看标题对得上，不套 level > 0
+                        val group =
+                            runCatching {
+                                aggregator.groupFor(source, query, Aggregator.GroupRank.ARTIST)
+                            }.getOrNull()
+                        // 艺术家图的判据是**艺术家**，不是标题。
+                        //
+                        // 艺术家图归属于艺人：同一艺人的任何一首歌，其艺人图都是同一张。
+                        // 原先套用了封面的 title 相关性判据（coverRelevant 要求标题能对上），
+                        // 于是「烟火里的尘埃 - 华晨宇」这种**正确艺人的其他歌曲**全被丢掉 ——
+                        // 结果是搜到 5 条但「可下载=0」。
+                        //
+                        // 也**不再要求 artistArtworkUrl 非空**：网易云的搜索响应不含
+                        // 艺人图字段，要等 artistCover() 打艺术家端点才能确定有无。
+                        // 取不到时那次下载会返回 null，由 filterNotNull 丢在下载环节。
                         val pool =
                             group
                                 ?.items
                                 ?.filter {
-                                    it.candidate.artistArtworkUrl.isNotBlank() &&
-                                        coverRelevant(query, it.candidate)
+                                    CandidateScoring.artistCompatible(query.artist, it.candidate.artist)
+                                }
+                                // **按艺人去重**：同一艺人的多首歌给出的是同一张艺人图。
+                                // 不去重时同一张图会被并行下多遍 —— 实测网易云一张 1.1MB，
+                                // 5 个候选合计 5.5MB 流量与 1.6 秒，而结果五张完全相同。
+                                // 去重键优先用源内 artistId，退到图片地址，再退到艺人名。
+                                ?.distinctBy { item ->
+                                    item.candidate.artistId.ifBlank {
+                                        item.candidate.artistArtworkUrl.ifBlank {
+                                            Matching.toHalfWidth(item.candidate.artist).lowercase().trim()
+                                        }
+                                    }
                                 }.orEmpty()
                         Diag.log(
                             "artistCovers: ${source.label} 搜索结果=" + (group?.items?.size ?: 0) +
@@ -2196,7 +2424,7 @@ object Repo {
                         // 封面候选的筛选标准比歌词宽：**只看标题是否对得上**。
                         // 不能套 level > 0 —— 那一层要求艺术家的中文/英文写法也兼容，
                         // 于是 iTunes 的「Pu Shu」对上本地的「朴树」会直接判 0，
-                        // 明明封面是对的却被丢掉。时长同理：Live 版封面往往就是同一张。
+                        // 封面正确却被丢弃。时长同理：Live 版封面通常就是同一张。
                         val pool =
                             group
                                 ?.items
@@ -2681,8 +2909,21 @@ object Repo {
         keepInto(patch, field, incoming, existing)
     }
 
-    /** 写完文件后，把这一首的元数据从磁盘重读一遍，保证界面显示的是真实值。 */
-    private suspend fun refreshFocusedFromDisk(meta: TrackMeta) {
+    /**
+     * 把这一首的元数据从磁盘重读一遍，保证界面显示的是文件里的真实值。
+     *
+     * 文件是权威来源：宿主的曲库只带标题/艺术家/专辑/专辑艺术家/流派/年份，
+     * 音轨号、碟号、作词、作曲、注释**只有文件里有**。选中曲目时与写完文件后
+     * 都要走这里，否则编辑区那几个字段永远是空的。
+     *
+     * @param reloadContent 是否连同歌词与封面一起重载。选中曲目时调用方
+     *   自己已经触发过一次，传 false 避免重复读。
+     */
+    private suspend fun refreshFocusedFromDisk(
+        meta: TrackMeta,
+        reloadContent: Boolean = true,
+    ) {
+        if (!meta.hasFile) return
         val fresh = runCatching { withContext(Dispatchers.IO) { Tags.read(meta.path) } }.getOrNull() ?: return
         // Tags.read 返回后端的 Track，镜像成界面用的 TrackMeta；id 沿用曲库里的那条
         val updated =
@@ -2694,6 +2935,11 @@ object Repo {
                 albumArtist = fresh.albumArtist,
                 genre = fresh.genre,
                 year = fresh.year,
+                track = fresh.track,
+                disc = fresh.disc,
+                lyricist = fresh.lyricist,
+                composer = fresh.composer,
+                comment = fresh.comment,
                 path = meta.path,
                 durationMs = meta.durationMs,
                 readable = true,
@@ -2701,8 +2947,10 @@ object Repo {
         withContext(Dispatchers.Main) {
             if (focused().key == meta.key) {
                 selected = updated
-                loadLyrics(updated)
-                loadCovers(updated)
+                if (reloadContent) {
+                    loadLyrics(updated)
+                    loadCovers(updated)
+                }
             }
             // 曲库列表里的那一行也同步刷新
             library =
@@ -2834,8 +3082,7 @@ object Repo {
      * **直接用源文本，不做任何解析/重组**。
      *
      * 原来的写法是 `editedLines.joinToString("\n") { it.text }` ——
-     * 那会把每行的时间戳全部丢掉，只剩纯文字。用户看到的现象就是
-     * 「从 QQ 拉下来明明是带时间戳的，保存后只剩文字」。
+     * 那会把每行的时间戳全部丢掉，只剩纯文字。
      * 歌词标签里存什么，界面就显示什么；这条链路不该有任何转换。
      */
     fun saveLyricsToDraft() {
@@ -2943,13 +3190,21 @@ object Repo {
                         io.github.univers629.spwtagworkbench.backend.read.CoverMime
                             .asCover(it)
                     }
+                // **只在确实有内容时才发这一次写入**。
+                // write() 对「patch 空且没有封面」返回失败（"没有要写入的字段"），
+                // 若照发不误，「只改艺术家图」会被这次空写入判成失败。
+                val hasPrimary = !patch.isEmpty || coverArt != null
                 val outcome =
-                    AudioTagWriter.write(
-                        track = backend,
-                        patch = patch,
-                        cover = coverArt,
-                        refreshHost = false,
-                    )
+                    if (hasPrimary) {
+                        AudioTagWriter.write(
+                            track = backend,
+                            patch = patch,
+                            cover = coverArt,
+                            refreshHost = false,
+                        )
+                    } else {
+                        WriteOutcome(path = backend.path, ok = true, message = "只写艺术家图")
+                    }
                 // 艺术家图是第二张图（type=8），必须单独再写一次：
                 // 一次 write 只能带一张封面，类型也不同，合并会互相覆盖。
                 val artistOutcome =
@@ -2963,6 +3218,11 @@ object Repo {
                     withContext(Dispatchers.Main) { Drafts.markSaved(key) }
                 } else {
                     val why = if (!outcome.ok) outcome.message else artistOutcome?.message.orEmpty()
+                    // 必须落日志：这条失败原先只进状态栏，排查时只能靠猜
+                    Diag.log(
+                        "save fail: ${meta.path.substringAfterLast('\\')} -> $why" +
+                            "（字段+封面=${outcome.ok} 艺术家图=${artistOutcome?.ok ?: "未涉及"}）",
+                    )
                     failures += "${meta.path.substringAfterLast('\\')}：$why"
                 }
             }
@@ -3045,8 +3305,7 @@ object Repo {
      * 关键：**有逐字单元时必须保留逐字时间**。
      *
      * 原来这里只输出 `[行时间]整行文字`，直接把 `line.cells` 丢掉了——
-     * 于是从 QQ 拉下来的逐字歌词（每个字都有起止时间）保存之后只剩一行行纯文字，
-     * 用户看到的就是「拉下来带时间戳，保存就只剩文字」。
+     * 于是从 QQ 拉下来的逐字歌词（每个字都有起止时间）保存之后只剩一行行纯文字。
      *
      * 逐字行按 SPL 写法输出：`[行时间][字时间]字[字时间]字…`，
      * 与 `LyricsFormat.toSpl` 一致——这样写进标签的内容仍是本插件可识别的格式，

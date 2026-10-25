@@ -51,6 +51,8 @@ dependencies {
     // 纯逻辑单元测试（匹配层等），无图形环境依赖
     testImplementation(kotlin("test"))
     testImplementation(libs.jaudiotagger)
+    // ebur128 的 JNA 绑定有单元测试：要用真实 JNA + 真实 DLL 验证数值与 EBU 参考一致
+    testImplementation(libs.jna)
     // Compose 编译器也作用于 test 编译，需要 runtime 在类路径上
     testImplementation(libs.compose.ui)
     "hostStubImplementation"(kotlin("stdlib"))

@@ -64,6 +64,10 @@ fun SpectrumPage(interactive: Boolean) {
         ) {
             Repo.analyze(meta)
         }
+        // 回放增益与频谱走的是同一条 BASS 解码路径，两者可并行（实测 12 核下
+        // 447ms vs 串行 763ms），增益那点耗时藏在频谱渲染里。
+        // 内部会先读文件里已有的值，没有才测 —— 不重复烧 CPU，也绝不自动写盘。
+        Repo.prepareReplayGain()
     }
     DetailScaffold(
         page = SpacePage.Spectrum,
@@ -93,6 +97,11 @@ fun SpectrumPage(interactive: Boolean) {
                         enabled = interactive && Repo.focused().hasFile,
                     )
             }
+            TapChip(
+                label = "重新测量响度",
+                onClick = { Repo.measureReplayGain() },
+                enabled = interactive && Repo.focused().hasFile && Repo.replayGainState !is Repo.GainState.Measuring,
+            )
         },
     ) {
         // 三种状态共用同一套结构：图（weight 1）+ 固定 42dp 彩带 + 固定 26dp 页脚。
@@ -103,6 +112,7 @@ fun SpectrumPage(interactive: Boolean) {
                 .fillMaxSize()
                 .padding(horizontal = 20.dp, vertical = 14.dp),
         ) {
+            ReplayGainRow(interactive)
             when (state) {
                 is SpectrogramState.Ready ->
                     SpectrumImage(state.image, state.displayChannels, state.sampleRate, Modifier.weight(1f))
@@ -346,5 +356,76 @@ private fun Skeleton() {
         contentAlignment = Alignment.Center,
     ) {
         Txt("解码中…", size = T.caption, color = palette.textTertiary, maxLines = 1)
+    }
+}
+
+/**
+ * 频谱页顶部的回放增益行。
+ *
+ * 与频谱同页是因为两者都走 BASS 解码，且能**并行**（实测 12 核下两个并发解码流
+ * 447ms，串行要 763ms）；增益那点耗时完全藏在频谱渲染里，进页总耗时不增加。
+ *
+ * 三种显示状态：
+ * - 文件里已有增益 → 直接显示（播放器「音量平衡」实际会用的值）
+ * - 没有 → 进页时自动测量，显示测量结果，**不写盘**
+ * - 测量中 → 显示进度
+ *
+ * 写入必须点「写入」—— 进页就改文件太意外。
+ */
+@Composable
+private fun ReplayGainRow(interactive: Boolean) {
+    val pal = Salt
+    val existing = Repo.replayGainExisting
+    val measured = Repo.replayGainMeasured
+    val state = Repo.replayGainState
+    val hasFile = Repo.focused().hasFile
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Txt("回放增益", size = T.caption, color = pal.textTertiary, maxLines = 1)
+        Spacer(Modifier.width(10.dp))
+
+        // 值：优先显示文件里已有的（那是真实落盘值），其次显示刚测的
+        val text =
+            when {
+                existing.present -> {
+                    val peak = if (existing.trackPeak.isNotBlank()) "  峰值 ${existing.trackPeak}" else ""
+                    "${existing.trackGain}  ← 文件里已有$peak"
+                }
+
+                state is Repo.GainState.Measuring -> "测量中 ${(state.progress * 100).toInt()}%"
+                measured != null && measured.ok ->
+                    "${measured.gainText()}  峰值 ${measured.peakText()}  ← 未写入"
+
+                state is Repo.GainState.Failed -> "测量失败：${state.reason}"
+                !hasFile -> "曲目没有可读文件"
+                else -> "…"
+            }
+        val tone =
+            when {
+                existing.present -> pal.ok
+                state is Repo.GainState.Failed -> pal.error
+                measured != null && measured.ok -> pal.warn
+                else -> pal.textTertiary
+            }
+        Txt(text, size = T.label, color = tone, maxLines = 1)
+        Spacer(Modifier.weight(1f))
+
+        if (measured != null && measured.ok && !existing.present) {
+            TapChip(
+                label = "写入",
+                onClick = { Repo.applyMeasuredReplayGain() },
+                enabled = interactive && hasFile,
+            )
+        }
+        if (existing.present) {
+            TapChip(
+                label = "清除",
+                onClick = { Repo.clearReplayGainTag() },
+                enabled = interactive && hasFile,
+            )
+        }
     }
 }

@@ -11,7 +11,7 @@ import java.io.RandomAccessFile
  *
  * Apple Music 与 iTunes 的文件是 MP4 容器：标签在 `moov/udta/meta/ilst`，音频在 `mdat`，
  * 而 `stco` / `co64` 记录每个音频块的**绝对偏移**。改标签会改变 `moov` 大小，块偏移必须
- * 同步重算；索引与真实数据对不上时，写入库在定位时会越过缓冲区（典型表现就是 JDK 的
+ * 同步重算；索引与真实数据对不上时，写入库在定位时会越过缓冲区（例如 JDK 的
  * `java.nio.Buffer` 抛出 `newPosition > limit`）。另外加密文件（FairPlay，`sinf` / `drms`）
  * 的音频数据本身不可读，写标签没有意义。
  *

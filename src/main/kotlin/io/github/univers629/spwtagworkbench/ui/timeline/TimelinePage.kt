@@ -680,7 +680,7 @@ private fun findNextUnstamped(
  *
  * 为什么不画全轴：参考项目 `SPW-Tag-Workbench` 的 `WaveformPanel` 也是滚动视口
  * （`viewStartMs` / `viewDurationMs`）。全轴把整首歌压进 900px 后，
- * 一秒宽只有几像素，打轴时根本看不出字与字的间隙。
+ * 一秒宽只有几像素，打轴时看不出字与字的间隙。
  *
  * 数据源是**直接读 PCM**（[Waveform.peaks]），与频谱图无关——
  * 频谱是一次性整首 FFT 的低分辨率图像，没法支撑局部放大。
@@ -707,8 +707,8 @@ private fun WaveformStrip(
     // **进场动画**：进页面后的前 [ENTRY_ANIM_MS] 让绘制位置从「基准 - 1.2 秒」
     // 线性追到「基准」，波形于是整体向左滚入。
     //
-    // 为什么需要它：宿主暂停时 `Repo.positionMs` 完全不动，波形就是一张静止图，
-    // 用户看到的是「进页没动画、像卡住」。用这个独立的动画量驱动，与播放状态无关。
+    // 宿主暂停时 `Repo.positionMs` 不动，波形是静止图。
+    // 用这个独立的动画量驱动，与播放状态无关。
     val entryOffset = remember {
         androidx.compose.animation.core
             .Animatable(1f)
@@ -873,7 +873,7 @@ private fun renderWaveLayer(
     //
     // 之前这里用 `axis.levelFor(key.width)` 选金字塔层级，结果选到 1024 桶那层：
     // 800px 宽上只有 1024 个点，且每层是把相邻桶取 max 合并出来的，
-    // 相邻点差异被抹平，画出来就是一排「大方块」——用户直接看出来了。
+    // 相邻点差异被抹平，画出来是一排「大方块」。
     // 最细层 8192 桶对 8 秒窗口而言密度足够（每像素约 10 个原始桶），
     // 线性插值采样能得到连续轮廓。金字塔留给整轴概览用。
     val data = axis.peaks

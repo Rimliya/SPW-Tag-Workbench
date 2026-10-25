@@ -17,7 +17,7 @@ import java.net.UnknownHostException
  * **只用 java.net.HttpURLConnection。**
  * 宿主是 jpackage 打包的裁剪运行时，实测不含 `java.net.http` 模块：
  * 此前用 JDK HttpClient 时，连异常类型 `HttpTimeoutException` 都会触发
- * NoClassDefFoundError，表现为所有在线源立即失败；原因是该模块不可用。
+ * NoClassDefFoundError，所有在线源立即失败。
  * HttpURLConnection 在 java.base 里，一定存在。
  *
  * 行为：连接/读取都有超时；网络类失败重试；4xx 不重试；中文参数正确编码；错误按类别区分。

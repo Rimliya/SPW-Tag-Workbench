@@ -5,7 +5,13 @@ package io.github.univers629.spwtagworkbench.data
 
 import androidx.compose.ui.graphics.ImageBitmap
 
-/** 一首曲目的元数据快照。字段与宿主 MediaItem / jaudiotagger 的 FieldKey 一一对应。 */
+/**
+ * 一首曲目的元数据快照。
+ *
+ * 编辑区展示的字段比宿主 MediaItem 多：宿主的曲库只带标题/艺术家/专辑/专辑艺术家/
+ * 流派/年份，而音轨号、碟号、作词、作曲、注释**只有文件里有**。这些字段在选中曲目时
+ * 由 [Repo.refreshFocusedFromDisk] 从文件读出后合并进来。
+ */
 data class TrackMeta(
     val id: String = "",
     val title: String = "",
@@ -14,6 +20,11 @@ data class TrackMeta(
     val albumArtist: String = "",
     val genre: String = "",
     val year: String = "",
+    val track: String = "",
+    val disc: String = "",
+    val lyricist: String = "",
+    val composer: String = "",
+    val comment: String = "",
     val path: String = "",
     val durationMs: Long = 0L,
     val readable: Boolean = true,

@@ -13,6 +13,7 @@ import io.github.univers629.spwtagworkbench.backend.read.ApeV2
 import io.github.univers629.spwtagworkbench.backend.read.ContainerKind
 import io.github.univers629.spwtagworkbench.backend.read.DffTags
 import io.github.univers629.spwtagworkbench.backend.read.Id3v2
+import io.github.univers629.spwtagworkbench.backend.read.JtUserFields
 import io.github.univers629.spwtagworkbench.backend.read.OggTags
 import io.github.univers629.spwtagworkbench.core.Diag
 import io.github.univers629.spwtagworkbench.core.Settings
@@ -20,14 +21,19 @@ import org.jaudiotagger.audio.AudioFile
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import org.jaudiotagger.tag.Tag
+import org.jaudiotagger.tag.flac.FlacTag
 import org.jaudiotagger.tag.id3.AbstractID3v2Frame
 import org.jaudiotagger.tag.id3.AbstractID3v2Tag
+import org.jaudiotagger.tag.id3.ID3v23Frame
 import org.jaudiotagger.tag.id3.ID3v23Tag
+import org.jaudiotagger.tag.id3.ID3v24Frame
 import org.jaudiotagger.tag.id3.ID3v24Tag
 import org.jaudiotagger.tag.id3.framebody.AbstractFrameBodyTextInfo
+import org.jaudiotagger.tag.id3.framebody.FrameBodyTXXX
 import org.jaudiotagger.tag.id3.valuepair.TextEncoding
 import org.jaudiotagger.tag.images.Artwork
 import org.jaudiotagger.tag.images.ArtworkFactory
+import org.jaudiotagger.tag.vorbiscomment.VorbisCommentTag
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -203,6 +209,10 @@ object AudioTagWriter {
         val tag = alignId3Tag(audio)
 
         for ((field, value) in patch.entries) {
+            if (field.isReplayGain) {
+                setUserDefinedField(tag, field, value)
+                continue
+            }
             val key = fieldKey(field)
             if (value.isBlank()) {
                 deleteField(tag, key)
@@ -226,6 +236,98 @@ object AudioTagWriter {
         applyId3Encoding(tag)
         AudioFileIO.write(audio)
     }
+
+    /**
+     * 写一个 ReplayGain 键。
+     *
+     * 这类字段没有 [FieldKey]，只能按标签体系各自处理：
+     *
+     * - **ID3v2**（MP3 / AIFF / DSF）：写成带描述符的 `TXXX`。jaudiotagger 的高层
+     *   接口只有固定枚举键，表达不了自定义描述符，因此用底层帧对象构造。
+     * - **Vorbis comment**（FLAC / OGG）：`createField(String, String)` 直接收自由键。
+     * - **其它体系**（MP4 / WAV / ASF）：jaudiotagger 没有自由键入口，跳过并记日志 ——
+     *   静默丢弃会让调用方以为写成功了。
+     */
+    private fun setUserDefinedField(
+        tag: Tag,
+        field: TagField,
+        value: String,
+    ) {
+        when (tag) {
+            is AbstractID3v2Tag -> setTxxx(tag, field.tagKey, value)
+            is FlacTag -> setVorbisKey(tag, field.tagKey, value) { key -> tag.createField(key, value) }
+            is VorbisCommentTag -> setVorbisKey(tag, field.tagKey, value) { key -> tag.createField(key, value) }
+            else -> Diag.log("replaygain: ${tag.javaClass.simpleName} 不支持自由键，跳过 ${field.tagKey}")
+        }
+    }
+
+    /**
+     * 写 `TXXX`：先清掉同描述符的旧帧，再追加新帧。
+     *
+     * 这里不能直接 `deleteField(description)` —— jaudiotagger 把所有 TXXX 挂在
+     * 帧 ID `"TXXX"` 这一个键下，按描述符删是删不到的，写空值时会删不掉并被
+     * 回读校验抓到。正确做法是把不匹配的 TXXX 先取出来，整体清空后放回。
+     */
+    private fun setTxxx(
+        tag: AbstractID3v2Tag,
+        description: String,
+        value: String,
+    ) {
+        val keep = mutableListOf<AbstractID3v2Frame>()
+        val frames = tag.fields
+        while (frames.hasNext()) {
+            val frame = frames.next() as? AbstractID3v2Frame ?: continue
+            val body = frame.body
+            if (body is FrameBodyTXXX && !body.description.equals(description, ignoreCase = true)) {
+                keep += frame
+            }
+        }
+        if (keep.size != countTxxx(tag)) {
+            // 有目标描述符，需要重建 TXXX 集合
+            tag.removeFrameOfType("TXXX")
+            keep.forEach { runCatching { tag.addField(it) } }
+        }
+        if (value.isBlank()) return
+
+        val body = FrameBodyTXXX(TextEncoding.ISO_8859_1, description, value)
+        val frame: AbstractID3v2Frame =
+            if (tag is ID3v24Tag) ID3v24Frame("TXXX") else ID3v23Frame("TXXX")
+        frame.body = body
+        tag.addField(frame)
+    }
+
+    /** 数一数标签里有多少个 TXXX 帧。 */
+    private fun countTxxx(tag: AbstractID3v2Tag): Int {
+        var count = 0
+        val frames = tag.fields
+        while (frames.hasNext()) {
+            if ((frames.next() as? AbstractID3v2Frame)?.body is FrameBodyTXXX) count++
+        }
+        return count
+    }
+
+    /** 写 Vorbis comment 自由键。 */
+    private inline fun setVorbisKey(
+        tag: Tag,
+        key: String,
+        value: String,
+        create: (String) -> org.jaudiotagger.tag.TagField,
+    ) {
+        runCatching { tag.deleteField(key) }
+        if (value.isBlank()) return
+        tag.addField(create(key))
+    }
+
+    /**
+     * 读回一个 ReplayGain 键，用于写后校验。
+     *
+     * 取法与读取侧共用 [JtUserFields]：三套体系的取法不同（ID3v2 要按 TXXX
+     * 描述符遍历帧、Vorbis 直接按键名取），分散实现容易只改一边。
+     */
+    private fun readUserDefined(
+        tag: Tag?,
+        field: TagField,
+    ): String = JtUserFields.get(tag, field.tagKey).orEmpty()
 
     /**
      * 按设置把 ID3v2 文本帧重编码：2.3 用 UTF-16，2.4 用 UTF-8。
@@ -289,9 +391,15 @@ object AudioTagWriter {
         val tag = audio.tag
 
         for ((field, expectedRaw) in patch.entries) {
-            val key = fieldKey(field)
-            val actual = readFirst(tag, key)
             val expected = expectedRaw.trim()
+            val actual =
+                if (field.isReplayGain) {
+                    // ReplayGain 没有 FieldKey：ID3v2 是 TXXX（按描述符），
+                    // Vorbis 是自由键，两者都能用标签的自定义键接口取
+                    readUserDefined(tag, field)
+                } else {
+                    readFirst(tag, fieldKey(field))
+                }
             if (!sameValue(field, actual, expected)) {
                 throw IOException(
                     "回读校验失败：${field.label} 实际为「${actual.take(24)}」，期望「${expected.take(24)}」，原文件未替换",
@@ -486,6 +594,13 @@ object AudioTagWriter {
         }
     }
 
+    /**
+     * 字段 → jaudiotagger 的 [FieldKey]。
+     *
+     * ReplayGain 没有对应的 [FieldKey]：ID3v2 里它要写成**带描述符的 `TXXX`**，
+     * Vorbis/APEv2 里是自由键 —— 两条路都不经过这个枚举，所以这里直接拒绝。
+     * 调用方必须先判 [TagField.isReplayGain]。
+     */
     fun fieldKey(field: TagField): FieldKey =
         when (field) {
             TagField.Title -> FieldKey.TITLE
@@ -500,11 +615,21 @@ object AudioTagWriter {
             TagField.Composer -> FieldKey.COMPOSER
             TagField.Comment -> FieldKey.COMMENT
             TagField.Lyrics -> FieldKey.LYRICS
+            TagField.ReplayGainTrackGain,
+            TagField.ReplayGainTrackPeak,
+            TagField.ReplayGainAlbumGain,
+            TagField.ReplayGainAlbumPeak,
+            -> throw IllegalArgumentException("$field 是 ReplayGain 自由键，没有 FieldKey；请先判 isReplayGain")
         }
 
     // ── ID3v2 系：AAC 前置标签 / DFF 的 ID3 块 ───────────────────────────────
 
-    /** 字段与 ID3v2 帧 ID 的对应关系（年份字段随版本变化）。 */
+    /**
+     * 字段 → ID3v2 帧 ID（年份字段随版本变化）。
+     *
+     * ReplayGain 在 ID3v2 里**不是固定帧 ID**：四个键都是 `TXXX`，靠帧内描述符区分，
+     * 因此走 [Id3v2.build] 的 `userTexts` 参数，不经过这里。
+     */
     internal fun id3FrameId(
         field: TagField,
         major: Int,
@@ -522,6 +647,11 @@ object AudioTagWriter {
             TagField.Composer -> "TCOM"
             TagField.Comment -> "COMM"
             TagField.Lyrics -> "USLT"
+            TagField.ReplayGainTrackGain,
+            TagField.ReplayGainTrackPeak,
+            TagField.ReplayGainAlbumGain,
+            TagField.ReplayGainAlbumPeak,
+            -> throw IllegalArgumentException("$field 在 ID3v2 里是 TXXX，没有固定帧 ID")
         }
 
     /** 在原有标签基础上合并补丁与封面，按设置构造 v2.3/v2.4 字节。 */
@@ -538,10 +668,28 @@ object AudioTagWriter {
         fields.remove("TDRC")
         val lyrics: String? =
             patch.value(TagField.Lyrics)?.let { if (it.isBlank()) null else it } ?: existing?.lyrics
+        // 注释同样有专用帧体（多 3 字节语言码），不能进 values。
+        // 必须区分「补丁里没有这个键」与「补丁把它设为空」：后者是删除，
+        // 若回退到旧值，注释将无法删除。
+        val comment: String? =
+            if (patch.has(TagField.Comment)) {
+                patch.value(TagField.Comment)?.takeIf { it.isNotBlank() }
+            } else {
+                existing?.fields?.get("COMM")
+            }
+        // 原标签里的 TXXX 必须原样带过去：ReplayGain、MusicBrainz ID、iTunNORM
+        // 都住在这里。补丁只覆盖它显式设置过的键，其余按键保留。
+        val userTexts = LinkedHashMap<String, String?>(existing?.userTexts.orEmpty())
         for ((field, value) in patch.entries) {
-            if (field == TagField.Lyrics) continue
-            val id = id3FrameId(field, major)
-            if (value.isBlank()) fields.remove(id) else fields[id] = value
+            when {
+                field == TagField.Lyrics -> Unit
+                // ReplayGain 在 ID3v2 里是 TXXX，靠描述符区分，没有固定帧 ID
+                field.isReplayGain -> userTexts[field.tagKey] = value
+                else -> {
+                    val id = id3FrameId(field, major)
+                    if (value.isBlank()) fields.remove(id) else fields[id] = value
+                }
+            }
         }
         val pictures = existing?.pictures.orEmpty().toMutableList()
         if (cover != null) {
@@ -549,7 +697,14 @@ object AudioTagWriter {
             pictures.removeAll { it.type == type }
             pictures += Id3v2.Picture(type = type, mime = cover.mime, description = "", bytes = cover.bytes)
         }
-        return Id3v2.build(version = major, values = fields, lyrics = lyrics, pictures = pictures)
+        return Id3v2.build(
+            version = major,
+            values = fields,
+            lyrics = lyrics,
+            comment = comment,
+            pictures = pictures,
+            userTexts = userTexts,
+        )
     }
 
     /** 前置 ID3v2（AAC 裸流、带 ID3v2 的 TTA）：只重写前缀，音频不动。 */
@@ -592,10 +747,11 @@ object AudioTagWriter {
         for ((field, expectedRaw) in patch.entries) {
             val expected = expectedRaw.trim()
             val actual =
-                if (field == TagField.Lyrics) {
-                    tag.lyrics.orEmpty()
-                } else {
-                    tag.text(id3FrameId(field, major)).orEmpty()
+                when {
+                    field == TagField.Lyrics -> tag.lyrics.orEmpty()
+                    // ReplayGain 住 TXXX，按描述符取
+                    field.isReplayGain -> tag.userText(field.tagKey).orEmpty()
+                    else -> tag.text(id3FrameId(field, major)).orEmpty()
                 }
             if (!sameValue(field, actual, expected)) {
                 throw IOException(
@@ -613,7 +769,11 @@ object AudioTagWriter {
     }
     // ── Opus（OggTags）──────────────────────────────────────────────────────
 
-    /** 字段与 Vorbis/Opus 注释键的对应关系。 */
+    /**
+     * 字段与 Vorbis/Opus 注释键的对应关系。
+     *
+     * ReplayGain 的键名由规范固定，与 [TagField.tagKey] 完全一致，因此直接取用。
+     */
     internal fun oggKeyOf(field: TagField): String =
         when (field) {
             TagField.Title -> "TITLE"
@@ -628,6 +788,11 @@ object AudioTagWriter {
             TagField.Composer -> "COMPOSER"
             TagField.Comment -> "COMMENT"
             TagField.Lyrics -> "LYRICS"
+            TagField.ReplayGainTrackGain,
+            TagField.ReplayGainTrackPeak,
+            TagField.ReplayGainAlbumGain,
+            TagField.ReplayGainAlbumPeak,
+            -> field.tagKey
         }
 
     private fun writeOggTags(
@@ -678,7 +843,11 @@ object AudioTagWriter {
 
     // ── APEv2 ────────────────────────────────────────────────────────────────
 
-    /** 字段与 APEv2 键的对应关系（键名按 APEv2 惯例）。 */
+    /**
+     * 字段与 APEv2 键的对应关系（键名按 APEv2 惯例）。
+     *
+     * ReplayGain 沿用规范规定的大写键名，与 [TagField.tagKey] 一致。
+     */
     internal fun apeKeyOf(field: TagField): String =
         when (field) {
             TagField.Title -> ApeV2.Key.TITLE
@@ -689,10 +858,15 @@ object AudioTagWriter {
             TagField.Year -> ApeV2.Key.YEAR
             TagField.Track -> ApeV2.Key.TRACK
             TagField.Disc -> ApeV2.Key.DISC
-            TagField.Lyricist -> "Lyricist"
-            TagField.Composer -> "Composer"
+            TagField.Lyricist -> ApeV2.Key.LYRICIST
+            TagField.Composer -> ApeV2.Key.COMPOSER
             TagField.Comment -> ApeV2.Key.COMMENT
             TagField.Lyrics -> ApeV2.Key.LYRICS
+            TagField.ReplayGainTrackGain,
+            TagField.ReplayGainTrackPeak,
+            TagField.ReplayGainAlbumGain,
+            TagField.ReplayGainAlbumPeak,
+            -> field.tagKey
         }
 
     /** 封面在 APEv2 里是「文件名 + 0 + 图片字节」。 */

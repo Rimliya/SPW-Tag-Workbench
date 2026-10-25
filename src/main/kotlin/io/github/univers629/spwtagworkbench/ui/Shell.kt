@@ -152,7 +152,7 @@ fun HostPassthrough() {
  * **必须由每个「独立组合树」自己调用**：`CompositionLocalProvider(LocalPalette …)`
  * 只覆盖调用它的子树。顶层侧栏（层级 A）挂在宿主的另一个 composition 里，
  * 拿不到 [PluginOverlay] 提供的色板，会退回 [LocalPalette] 的默认值
- * `darkSolid`（`material = false`）——表现就是材质明明开着、浮层却全是不透明色。
+ * `darkSolid`（`material = false`）：材质开着但浮层全是不透明色。
  */
 @Composable
 internal fun rememberHostPalette(): Palette {
@@ -460,7 +460,7 @@ private fun WideToolbar(
             // 保存按钮**常驻**，不再依赖「有没有脏草稿」才出现。
             //
             // 之前是 `if (dirty > 0)` 才渲染，问题有二：
-            // 1. 用户改完歌词发现顶栏根本没有保存入口，不知道内容去哪了；
+            // 1. 用户改完歌词发现顶栏没有保存入口，不知道内容去哪了；
             // 2. 为了点亮它，各处要小心翼翼地维护「脏标记」，编辑框那种逐字回调
             //    尤其容易把状态算错（曾经因为比较内容判断「外部变化」，把输入吃成单字）。
             //

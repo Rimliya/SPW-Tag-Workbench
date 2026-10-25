@@ -45,6 +45,25 @@ LDDC（Python，chenmozhijin，GPL-3.0-only）
 | [Lyrico-Plugins](https://github.com/Replica0110/Lyrico-Plugins) | 仓库根目录未提供许可证 | 各音乐源端点与封面尺寸的对照参考；**不据此移植代码** |
 | [Lyricify-Lyrics-Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper) | Apache-2.0 | TTML / QRC / YRC 歌词格式的规格参考 |
 
+## 随插件分发的第三方组件
+
+以下组件**会打包进 `.spmod`** 一起分发，各自保留原始版权与许可声明。
+
+| 组件 | 许可证 | 作者 | 随附内容 |
+| --- | --- | --- | --- |
+| [libebur128](https://github.com/jiixyj/libebur128) 1.2.6 | **MIT** | **Jan Kokemüller**（`jiixyj`） | EBU R128 响度测量（ITU-R BS.1770） |
+
+### libebur128
+
+- **源码**：`native/`（`ebur128.c` / `ebur128.h` / `queue/sys/queue.h`，上游原样未改）
+- **许可全文**：`native/COPYING`
+- **编译产物**：`src/main/resources/native/win-x64/ebur128.dll`（约 33 KB）
+- **编译方式**：`native/build-native.ps1`（`gcc -O2 -shared -msse2 -mfpmath=sse`）
+- **调用方式**：JNA 绑定见 `backend/audio/Ebur128.kt`，不解码音频，只接受 PCM 采样
+
+MIT 与 GPL-3.0 兼容，因此可以随本项目（GPL-3.0-only）分发，
+但必须保留原始版权声明 —— 即 `native/COPYING` 与上述版权信息。
+
 ## 宿主依赖
 
 插件运行时依赖由 Salt Player for Windows 宿主提供，均以 `compileOnly` 参与编译，

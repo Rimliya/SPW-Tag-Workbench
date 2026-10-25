@@ -51,8 +51,8 @@ class QqMusicSource : MusicSource {
 
         // QQ 搜索：**Lite 优先、Desktop 回退、双主机轮询**。
         //
-        // 之前只用 Desktop 方法（`req_0` 键、无 `comm`），实测返回 0 条——
-        // 用户看到的现象是「歌词候选里没有 QQ 源」，且没有任何报错。
+        // 之前只用 Desktop 方法（`req_0` 键、无 `comm`），返回 0 条——
+        // 歌词候选里没有 QQ 源，也没有报错。
         // 参考项目 SPW-Tag-Workbench 的 `qqSearch` 就是这么修的：
         // - Lite 用顶层键 `request`，歌曲在 `item_song`
         // - Desktop 用顶层键 `req_1`，歌曲在 `song.list`
@@ -222,7 +222,7 @@ class QqMusicSource : MusicSource {
      * QQ 搜索的完整尝试链：Lite 与 Desktop 各试两台主机，返回第一个非空结果。
      *
      * 为什么这么绕：QQ 的搜索接口对客户端类型和主机都有风控，单点失败就会**静默返回 0 条**，
-     * 表现为「歌词候选里没有 QQ 源」而没有任何错误提示。
+     * 歌词候选里没有 QQ 源，也没有错误提示。
      * 参考项目 SPW-Tag-Workbench 的做法是逐层回退，这里照搬。
      */
     private suspend fun qqSearch(keyword: String): List<Json> {

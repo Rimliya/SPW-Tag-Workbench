@@ -313,7 +313,7 @@ private fun SidebarPanel(
             SidebarField("标题", meta.title, Tags.Key.Title, meta.hasFile)
             SidebarField("艺术家", meta.artist, Tags.Key.Artist, meta.hasFile)
             SidebarField("专辑", meta.album, Tags.Key.Album, meta.hasFile)
-            SidebarField("流派", meta.genre, Tags.Key.Genre, meta.hasFile)
+            SidebarField("风格", meta.genre, Tags.Key.Genre, meta.hasFile)
 
             Spacer(Modifier.height(10.dp))
             StatusLine()

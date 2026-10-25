@@ -4,6 +4,7 @@
 package io.github.univers629.spwtagworkbench.backend.read
 
 import io.github.univers629.spwtagworkbench.backend.model.CoverArt
+import io.github.univers629.spwtagworkbench.backend.model.TagField
 import io.github.univers629.spwtagworkbench.core.Diag
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
@@ -325,6 +326,34 @@ object CoverStore {
  * 读取层：把「宿主实体」和「文件」都收成统一模型。
  */
 object TrackReader {
+    /**
+     * ReplayGain 四键的原始文本。
+     *
+     * 保留文件里的原样字符串而不解析成数值：规范要求消费方容忍写法变体
+     * （前导 `+`、位数多少、键名大小写），解析时机交给真正要用它的地方；
+     * 没写过这些标签的文件四项都是空串，与「算出来是 0」区分得开。
+     */
+    data class Gain(
+        val trackGain: String = "",
+        val trackPeak: String = "",
+        val albumGain: String = "",
+        val albumPeak: String = "",
+    )
+
+    /**
+     * 按 [TagField.tagKey] 取四个 ReplayGain 键。
+     *
+     * 键名由规范固定，三套体系完全一致，差别只在「怎么取值」——
+     * 因此这里收一个取值函数，各条读取路径传各自的实现。
+     */
+    private fun replayGainOf(lookup: (TagField) -> String?): Gain =
+        Gain(
+            trackGain = lookup(TagField.ReplayGainTrackGain).orEmpty(),
+            trackPeak = lookup(TagField.ReplayGainTrackPeak).orEmpty(),
+            albumGain = lookup(TagField.ReplayGainAlbumGain).orEmpty(),
+            albumPeak = lookup(TagField.ReplayGainAlbumPeak).orEmpty(),
+        )
+
     /** 从文件读一份完整标签（封面字节可选）。 */
     fun readFile(
         path: String,
@@ -363,6 +392,8 @@ object TrackReader {
             if (artwork != null && artwork.isNotEmpty()) {
                 CoverStore.put(path, artwork)
             }
+            // jaudiotagger 路径的自由键取法按体系不同，统一走 JtUserFields
+            val gain = replayGainOf { JtUserFields.get(tag, it.tagKey) }
             io.github.univers629.spwtagworkbench.backend.model
                 .Track(
                     id = "",
@@ -377,6 +408,8 @@ object TrackReader {
                     disc = read(tag, FieldKey.DISC_NO),
                     lyrics = read(tag, FieldKey.LYRICS),
                     comment = read(tag, FieldKey.COMMENT),
+                    lyricist = read(tag, FieldKey.LYRICIST),
+                    composer = read(tag, FieldKey.COMPOSER),
                     durationMs =
                         run {
                             val seconds = header?.trackLength?.toLong() ?: 0L
@@ -384,6 +417,10 @@ object TrackReader {
                         },
                     bitDepth = if ((header?.bitsPerSample ?: 0) > 0) "${header?.bitsPerSample} bit" else "",
                     bitrate = header?.bitRate?.let { "$it kbps" } ?: "",
+                    replayGainTrackGain = gain.trackGain,
+                    replayGainTrackPeak = gain.trackPeak,
+                    replayGainAlbumGain = gain.albumGain,
+                    replayGainAlbumPeak = gain.albumPeak,
                     readable = true,
                     hasCover =
                         artwork != null ||
@@ -456,6 +493,9 @@ object TrackReader {
         val major = tag.major
 
         fun field(id: String): String = tag.text(id).orEmpty()
+
+        // ReplayGain 在 ID3v2 里是 TXXX，按描述符取（描述符 = TagField.tagKey）
+        val gain = replayGainOf { tag.userText(it.tagKey) }
         return io.github.univers629.spwtagworkbench.backend.model.Track(
             id = "",
             path = path,
@@ -469,9 +509,15 @@ object TrackReader {
             disc = field("TPOS"),
             lyrics = tag?.lyrics.orEmpty(),
             comment = field("COMM"),
+            lyricist = field("TEXT"),
+            composer = field("TCOM"),
             durationMs = 0L,
             bitDepth = "",
             bitrate = "",
+            replayGainTrackGain = gain.trackGain,
+            replayGainTrackPeak = gain.trackPeak,
+            replayGainAlbumGain = gain.albumGain,
+            replayGainAlbumPeak = gain.albumPeak,
             readable = true,
             hasCover = cover != null && cover.isNotEmpty(),
         )
@@ -484,6 +530,7 @@ object TrackReader {
         withCover: Boolean,
     ): io.github.univers629.spwtagworkbench.backend.model.Track? {
         val comment = OggTags.read(file) ?: return null
+        val gain = replayGainOf { comment.text(it.tagKey) }
         return io.github.univers629.spwtagworkbench.backend.model.Track(
             id = "",
             path = path,
@@ -497,9 +544,15 @@ object TrackReader {
             disc = comment.text("DISCNUMBER").orEmpty(),
             lyrics = comment.text("LYRICS").orEmpty(),
             comment = comment.text("COMMENT").orEmpty(),
+            lyricist = comment.text("LYRICIST").orEmpty(),
+            composer = comment.text("COMPOSER").orEmpty(),
             durationMs = 0L,
             bitDepth = "",
             bitrate = "",
+            replayGainTrackGain = gain.trackGain,
+            replayGainTrackPeak = gain.trackPeak,
+            replayGainAlbumGain = gain.albumGain,
+            replayGainAlbumPeak = gain.albumPeak,
             readable = true,
             hasCover = comment.text("METADATA_BLOCK_PICTURE") != null,
         )
@@ -520,6 +573,7 @@ object TrackReader {
         if (withCover && cover != null && cover.isNotEmpty()) {
             CoverStore.put(path, cover)
         }
+        val gain = replayGainOf { tag.text(it.tagKey) }
         return io.github.univers629.spwtagworkbench.backend.model.Track(
             id = "",
             path = path,
@@ -533,9 +587,15 @@ object TrackReader {
             disc = tag.text(ApeV2.Key.DISC).orEmpty(),
             lyrics = tag.text(ApeV2.Key.LYRICS).orEmpty(),
             comment = tag.text(ApeV2.Key.COMMENT).orEmpty(),
+            lyricist = tag.text(ApeV2.Key.LYRICIST).orEmpty(),
+            composer = tag.text(ApeV2.Key.COMPOSER).orEmpty(),
             durationMs = 0L,
             bitDepth = "",
             bitrate = "",
+            replayGainTrackGain = gain.trackGain,
+            replayGainTrackPeak = gain.trackPeak,
+            replayGainAlbumGain = gain.albumGain,
+            replayGainAlbumPeak = gain.albumPeak,
             readable = true,
             hasCover = cover != null && cover.isNotEmpty(),
         )

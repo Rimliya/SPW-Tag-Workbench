@@ -111,7 +111,7 @@ fun WorkbenchPage() {
                         label = "写入 $count 首",
                         onClick = {
                             Repo.dismissAlbumBatch()
-                            Repo.writeAlbumBatch(listOf(Tags.Key.Album, Tags.Key.AlbumArtist, Tags.Key.Genre, Tags.Key.Year))
+                            Repo.writeAlbumBatch(Tags.Key.ALBUM_LEVEL)
                         },
                         accent = pal.accent,
                     )
@@ -142,7 +142,7 @@ private fun DeskDetail(modifier: Modifier = Modifier) {
     // 为什么不能给左列 weight(1f, fill=false)：
     //   fill=false 的意思是「按比例分到位置，但不强制填满」。
     //   左列被 widthIn 封顶到 380dp 后，那份多余空间不会转给右列，
-    //   而是留成 Row 末尾的空隙——表现就是右侧白白空出一大截。
+    //   而是留成 Row 末尾的空隙，右侧空出一大截。
     //
     // 为什么不用 weight 而用 BoxWithConstraints 算宽度：
     //   封面是 1:1 正方形，全屏时若左右各占一半，封面会撑到上千像素、
@@ -503,18 +503,33 @@ private fun MetadataCard(
                 )
             }
             Spacer(Modifier.height(12.dp))
-            MetaRow("标题", meta.title, Tags.Key.Title, original.hasFile, draft?.fields?.containsKey(TagField.Title) == true)
-            MetaRow("艺术家", meta.artist, Tags.Key.Artist, original.hasFile, draft?.fields?.containsKey(TagField.Artist) == true)
-            MetaRow("专辑", meta.album, Tags.Key.Album, original.hasFile, draft?.fields?.containsKey(TagField.Album) == true)
-            MetaRow(
-                "专辑艺术家",
-                meta.albumArtist,
-                Tags.Key.AlbumArtist,
-                original.hasFile,
-                draft?.fields?.containsKey(TagField.AlbumArtist) == true,
+            // 顺序与标签沿用 legacy 版元数据区：标题 / 艺术家 / 专辑 / 年份 /
+            // 音轨号 / 风格 / 专辑艺术家 / 作曲家 / 作词家 / 注释。
+            MetaRow("标题", meta.title, Tags.Key.Title, original.hasFile, isDirty(TagField.Title))
+            MetaRow("艺术家", meta.artist, Tags.Key.Artist, original.hasFile, isDirty(TagField.Artist))
+            MetaRow("专辑", meta.album, Tags.Key.Album, original.hasFile, isDirty(TagField.Album))
+            MetaRow("年份", meta.year, Tags.Key.Year, original.hasFile, isDirty(TagField.Year))
+            // 音轨号与碟号共用一行（legacy 的排法）：两个都是短数字，各占一整行太浪费
+            MetaPairRow(
+                first = Triple("音轨号", meta.track, Tags.Key.Track),
+                second = Triple("碟号", meta.disc, Tags.Key.Disc),
+                editable = original.hasFile,
+                firstChanged = isDirty(TagField.Track),
+                secondChanged = isDirty(TagField.Disc),
             )
-            MetaRow("流派", meta.genre, Tags.Key.Genre, original.hasFile, draft?.fields?.containsKey(TagField.Genre) == true)
-            MetaRow("年份", meta.year, Tags.Key.Year, original.hasFile, draft?.fields?.containsKey(TagField.Year) == true)
+            MetaRow("风格", meta.genre, Tags.Key.Genre, original.hasFile, isDirty(TagField.Genre))
+            MetaRow("专辑艺术家", meta.albumArtist, Tags.Key.AlbumArtist, original.hasFile, isDirty(TagField.AlbumArtist))
+            MetaRow("作曲家", meta.composer, Tags.Key.Composer, original.hasFile, isDirty(TagField.Composer))
+            MetaRow("作词家", meta.lyricist, Tags.Key.Lyricist, original.hasFile, isDirty(TagField.Lyricist))
+            // 注释可能很长，用多行框（legacy 同样给它 TextArea）
+            MetaRow(
+                label = "注释",
+                value = meta.comment,
+                key = Tags.Key.Comment,
+                editable = original.hasFile,
+                changed = isDirty(TagField.Comment),
+                lines = 3,
+            )
 
             Spacer(Modifier.height(12.dp))
             BatchRow(original)
@@ -612,6 +627,9 @@ private fun BatchRow(meta: TrackMeta) {
     }
 }
 
+/** 该字段是否有未保存的草稿改动。 */
+private fun isDirty(field: TagField): Boolean = Drafts.draftFor(Repo.focused().key)?.fields?.containsKey(field) == true
+
 @Composable
 private fun MetaRow(
     label: String,
@@ -619,6 +637,43 @@ private fun MetaRow(
     key: Tags.Key,
     editable: Boolean,
     changed: Boolean = false,
+    lines: Int = 1,
+) {
+    val pal = Salt
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+        // 多行框要顶对齐：居中会让标签飘在框的中间
+        verticalAlignment = if (lines > 1) Alignment.Top else Alignment.CenterVertically,
+    ) {
+        MetaLabel(label, changed, lines)
+        FieldBox(
+            value = value,
+            onCommit = { Repo.stageField(key, it) },
+            modifier = Modifier.weight(1f),
+            placeholder = "未填写",
+            singleLine = lines <= 1,
+            readOnly = !editable,
+            size = T.label,
+        )
+    }
+}
+
+/**
+ * 两个短字段并排一行（音轨号 + 碟号）。
+ *
+ * 沿用 legacy 版的排法：两者都是 1~3 位数字，各占一整行会把元数据区拉得过长。
+ * 第一格不显示标签，第二格前面带标签，视觉上就是 `[音轨] 碟号 [碟号]`。
+ */
+@Composable
+private fun MetaPairRow(
+    first: Triple<String, String, Tags.Key>,
+    second: Triple<String, String, Tags.Key>,
+    editable: Boolean,
+    firstChanged: Boolean = false,
+    secondChanged: Boolean = false,
 ) {
     val pal = Salt
     Row(
@@ -628,22 +683,48 @@ private fun MetaRow(
                 .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        MetaLabel(first.first, firstChanged)
+        FieldBox(
+            value = first.second,
+            onCommit = { Repo.stageField(first.third, it) },
+            modifier = Modifier.weight(1f),
+            placeholder = "未填写",
+            readOnly = !editable,
+            size = T.label,
+        )
         Txt(
-            text = if (changed) "● $label" else label,
+            text = if (secondChanged) "● ${second.second}" else second.first,
             size = T.caption,
-            color = if (changed) pal.warn else pal.textTertiary,
-            modifier = Modifier.width(86.dp),
+            color = if (secondChanged) pal.warn else pal.textTertiary,
+            modifier = Modifier.padding(start = 10.dp, end = 8.dp),
             maxLines = 1,
         )
         FieldBox(
-            value = value,
-            onCommit = { Repo.stageField(key, it) },
+            value = second.second,
+            onCommit = { Repo.stageField(second.third, it) },
             modifier = Modifier.weight(1f),
             placeholder = "未填写",
             readOnly = !editable,
             size = T.label,
         )
     }
+}
+
+/** 行首标签；有未保存改动时前面加一个圆点。 */
+@Composable
+private fun MetaLabel(
+    label: String,
+    changed: Boolean,
+    lines: Int = 1,
+) {
+    val pal = Salt
+    Txt(
+        text = if (changed) "● $label" else label,
+        size = T.caption,
+        color = if (changed) pal.warn else pal.textTertiary,
+        modifier = Modifier.width(86.dp).padding(top = if (lines > 1) 6.dp else 0.dp),
+        maxLines = 1,
+    )
 }
 
 @Composable

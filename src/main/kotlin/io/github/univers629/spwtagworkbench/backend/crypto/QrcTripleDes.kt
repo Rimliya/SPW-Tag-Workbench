@@ -749,7 +749,7 @@ object QrcTripleDes {
         val ip = initialPermutation(input)
         // **必须 and 0xFFFFFFFFL**：Int 的 toLong() 会做符号扩展，
         // 负的 Int 变成 64 位负数（高 32 位全是 1），参与 xor 后整块就错了。
-        // 实测表现为「第一块对、后续块全错」——因为块 0 的高位恰好没被用到。
+        // 漏掉这个掩码时只有第一块对、后续块全错：块 0 的高位恰好没被用到。
         var s0 = ip[0].toLong() and 0xFFFFFFFFL
         var s1 = ip[1].toLong() and 0xFFFFFFFFL
         for (idx in 0 until 15) {

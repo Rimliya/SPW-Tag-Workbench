@@ -264,10 +264,26 @@ class Aggregator(
     private fun truncate(items: List<GroupedCandidate>): List<GroupedCandidate> =
         if (items.size <= MAX_PER_SOURCE) items else items.subList(0, MAX_PER_SOURCE)
 
+    /**
+     * 单源候选的排序依据。
+     *
+     * 截断到 [MAX_PER_SOURCE] 是**按排序结果取前几条**，所以排序键决定了
+     * 谁会活下来。封面看标题（要有同一首歌的封面），艺术家图要看艺人
+     * （艺人的图对他任何一首歌都一样），两者不能共用一个键。
+     */
+    enum class GroupRank {
+        /** 按标题相关性 —— 封面、歌词、元数据用。 */
+        TITLE,
+
+        /** 艺术家兼容优先，其次才是标题相关性 —— 艺术家图页用。 */
+        ARTIST,
+    }
+
     /** 单源搜索（封面流式载入用）。 */
     suspend fun groupFor(
         source: MusicSource,
         query: SearchQuery,
+        rank: GroupRank = GroupRank.TITLE,
     ): SourceGroup? {
         val result = withTimeoutOrNull(searchTimeoutMs) { source.search(query) }
         val items =
@@ -276,7 +292,18 @@ class Aggregator(
                 ?.map { candidate ->
                     GroupedCandidate(candidate = candidate, level = CandidateScoring.level(query, candidate))
                 }.orEmpty()
-                .sortedWith(compareByDescending<GroupedCandidate> { it.level })
+                .sortedWith(
+                    when (rank) {
+                        GroupRank.TITLE -> compareByDescending<GroupedCandidate> { it.level }
+
+                        // 否则「正确艺人的其他歌曲」会被标题更匹配的别人挤掉：
+                        // 标题同名的翻唱排在前面，截断到 5 条后真艺人的歌被挤掉。
+                        GroupRank.ARTIST ->
+                            compareByDescending<GroupedCandidate> {
+                                if (CandidateScoring.artistCompatible(query.artist, it.candidate.artist)) 1 else 0
+                            }.thenByDescending { it.level }
+                    },
+                )
         return SourceGroup(
             sourceId = source.id,
             label = source.label,

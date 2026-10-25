@@ -36,8 +36,24 @@ object Id3v2 {
         val pictures: List<Picture>,
         /** 整个标签占用的字节数（含头与内边距）。 */
         val totalSize: Int,
+        /**
+         * `TXXX` 帧：**描述符 → 值**。
+         *
+         * 普通文本帧的 ID 是固定的四字符（`TIT2` 等），一个 ID 只能有一个值；
+         * `TXXX` 不同 —— 帧 ID 全是 `TXXX`，靠帧内的描述符区分，数量不限。
+         * ReplayGain 就靠它承载（四个键各占一个 TXXX）。
+         *
+         * 描述符按规范大小写不敏感，这里统一按原样存，查找时忽略大小写。
+         */
+        val userTexts: Map<String, String> = emptyMap(),
     ) {
         fun text(frameId: String): String? = fields[frameId]
+
+        /** 按描述符取 `TXXX` 的值；找不到返回 null。描述符忽略大小写。 */
+        fun userText(description: String): String? = userTexts.entries.firstOrNull { it.key.equals(description, ignoreCase = true) }?.value
+
+        /** 是否含某个 `TXXX` 描述符。 */
+        fun hasUserText(description: String): Boolean = userTexts.keys.any { it.equals(description, ignoreCase = true) }
     }
 
     /** 文本帧 ID（2.3 与 2.4 多数相同，年份字段不同）。 */
@@ -45,14 +61,55 @@ object Id3v2 {
 
     // ── 读 ──────────────────────────────────────────────────────────────────
 
-    /** 读文件开头的 ID3v2 标签；没有返回 null。 */
+    /**
+     * 读文件开头的 ID3v2 标签；没有返回 null。
+     *
+     * **只读标签本身**：先读 10 字节头拿到声明长度，再按需读那么长。
+     * 早先是 `file.readBytes()` 把整个文件读进来 —— 一首 100 MB 的 DSD 为此白读 100 MB，
+     * 而真正需要的标签通常只有几十 KB。
+     */
     fun read(file: File): Tag? =
         try {
-            val bytes = file.readBytes()
+            val head = readPrefix(file, HEADER_SIZE)
+            if (head == null || !hasMagic(head, 0)) return null
+            val total = HEADER_SIZE + syncsafe(head, 6)
+            val bytes = readPrefix(file, total) ?: return null
             readAt(bytes, 0)
         } catch (_: Throwable) {
             null
         }
+
+    /** 读文件开头最多 [count] 字节；文件更短时返回实际读到的部分。 */
+    private fun readPrefix(
+        file: File,
+        count: Int,
+    ): ByteArray? {
+        if (count <= 0) return null
+        return file.inputStream().use { input ->
+            val buffer = ByteArray(count)
+            var read = 0
+            while (read < count) {
+                val n = input.read(buffer, read, count - read)
+                if (n <= 0) break
+                read += n
+            }
+            when (read) {
+                0 -> null
+                count -> buffer
+                else -> buffer.copyOf(read)
+            }
+        }
+    }
+
+    /** 判断 [offset] 处是不是 `ID3` 魔数。 */
+    private fun hasMagic(
+        bytes: ByteArray,
+        offset: Int,
+    ): Boolean =
+        offset + 3 <= bytes.size &&
+            bytes[offset] == 'I'.code.toByte() &&
+            bytes[offset + 1] == 'D'.code.toByte() &&
+            bytes[offset + 2] == '3'.code.toByte()
 
     /** 从 [offset] 处读标签。 */
     fun readAt(
@@ -60,9 +117,7 @@ object Id3v2 {
         offset: Int,
     ): Tag? {
         if (offset + HEADER_SIZE > bytes.size) return null
-        if (bytes[offset] != 'I'.code.toByte() || bytes[offset + 1] != 'D'.code.toByte() || bytes[offset + 2] != '3'.code.toByte()) {
-            return null
-        }
+        if (!hasMagic(bytes, offset)) return null
         val major = bytes[offset + 3].toInt() and 0xFF
         if (major !in 3..4) return null // 2.2 用 3 字节帧 ID，单独一种解析，暂不支持
         val flags = bytes[offset + 5].toInt() and 0xFF
@@ -85,6 +140,7 @@ object Id3v2 {
         }
 
         val fields = LinkedHashMap<String, String>()
+        val userTexts = LinkedHashMap<String, String>()
         var lyrics: String? = null
         val pictures = mutableListOf<Picture>()
         while (p + 10 <= body.size) {
@@ -95,6 +151,9 @@ object Id3v2 {
             if (size <= 0 || p + 10 + size > body.size) break
             val frame = body.copyOfRange(p + 10, p + 10 + size)
             when {
+                // TXXX 必须排在通用 `T` 分支前面：它的帧体是「编码 + 描述符 + 0 + 值」，
+                // 被 parseText 当成普通文本会连描述符一起读进来
+                id == "TXXX" -> parseUserText(frame)?.let { (desc, value) -> userTexts[desc] = value }
                 id == "USLT" -> lyrics = parseLyrics(frame) ?: lyrics
                 id == "APIC" -> parsePicture(frame)?.let { pictures += it }
                 id == "COMM" -> parseComment(frame)?.let { fields.putIfAbsent("COMM", it) }
@@ -103,7 +162,35 @@ object Id3v2 {
             p += 10 + size
         }
         val total = HEADER_SIZE + declared
-        return Tag(major = major, fields = fields, lyrics = lyrics, pictures = pictures, totalSize = total)
+        return Tag(
+            major = major,
+            fields = fields,
+            lyrics = lyrics,
+            pictures = pictures,
+            totalSize = total,
+            userTexts = userTexts,
+        )
+    }
+
+    /**
+     * 解析 `TXXX` 帧体：`编码 + 描述符 + 0 + 值`。
+     *
+     * 与 COMM 的区别是没有 3 字节语言码，多出来的反而是描述符承担了区分作用。
+     * 描述符为空时视为无效帧（规范要求描述符非空才有意义）。
+     */
+    private fun parseUserText(frame: ByteArray): Pair<String, String>? {
+        if (frame.size < 3) return null
+        val encoding = frame[0].toInt() and 0xFF
+        if (encoding !in 0..3) return null
+
+        val descEnd = terminatorEnd(frame, 1, encoding)
+        val description = decodeText(encoding, frame, 1, descEnd)?.trim().orEmpty()
+        if (description.isEmpty()) return null
+
+        val step = if (encoding == 1 || encoding == 2) 2 else 1
+        val valueStart = (descEnd + step).coerceAtMost(frame.size)
+        val value = decodeText(encoding, frame, valueStart)?.trimEnd().orEmpty()
+        return description to value
     }
 
     private fun parseText(frame: ByteArray): String? {
@@ -201,13 +288,19 @@ object Id3v2 {
      *
      * @param version 3 = ID3v2.3（文本用 UTF-16）、4 = ID3v2.4（文本用 UTF-8）
      * @param values 帧 ID → 文本值（null 或空串表示不写）
+     * @param userTexts 描述符 → 值，每个非空项写成一个 `TXXX` 帧。
+     *   ReplayGain 的四个键走这里（`REPLAYGAIN_TRACK_GAIN` 等）。
+     *   值传 null 或空串表示不写该帧；**删除已有帧是调用方的事**，
+     *   因为 `build` 只负责构造，不知道原标签里有什么。
      */
     fun build(
         version: Int,
         values: Map<String, String?>,
         lyrics: String? = null,
+        comment: String? = null,
         pictures: List<Picture> = emptyList(),
         padding: Int = 1024,
+        userTexts: Map<String, String?> = emptyMap(),
     ): ByteArray {
         val major = if (version == 4) 4 else 3
         val encoding = if (major == 4) 3 else 1
@@ -215,10 +308,21 @@ object Id3v2 {
         for ((id, value) in values) {
             val text = value?.trim().orEmpty()
             if (text.isEmpty() || !id.matches(Regex("^[A-Z0-9]{4}$"))) continue
+            // COMM 的帧体不是纯文本（多 3 字节语言码），由 comment 参数单独写
+            if (id == "COMM") continue
             frames.write(frameBytes(major, id, textFrameBody(encoding, text)))
+        }
+        for ((description, value) in userTexts) {
+            val text = value?.trimEnd().orEmpty()
+            val desc = description.trim()
+            if (text.isEmpty() || desc.isEmpty()) continue
+            frames.write(frameBytes(major, "TXXX", userTextBody(encoding, desc, text)))
         }
         lyrics?.takeIf { it.isNotBlank() }?.let {
             frames.write(frameBytes(major, "USLT", lyricsBody(encoding, it)))
+        }
+        comment?.takeIf { it.isNotBlank() }?.let {
+            frames.write(frameBytes(major, "COMM", commentBody(encoding, it)))
         }
         for (picture in pictures) {
             frames.write(frameBytes(major, "APIC", pictureBody(encoding, picture)))
@@ -262,6 +366,38 @@ object Id3v2 {
             "XXX".toByteArray(Charsets.ISO_8859_1) +
             terminator(encoding) +
             encodeText(encoding, lyrics)
+
+    /**
+     * `COMM` 帧体：`编码 + 语言(3) + 描述 + 0 + 文本`。
+     *
+     * 与 `TXXX` 的区别就是多了 3 字节语言码。**不能当普通文本帧写**：
+     * `parseComment` 会跳过语言码与描述，写成纯文本时读回来是空串，
+     * 走手写写入器的容器（DFF、AAC 裸流、带 ID3v2 的 TTA）会直接回读校验失败。
+     */
+    private fun commentBody(
+        encoding: Int,
+        text: String,
+    ): ByteArray =
+        byteArrayOf(encoding.toByte()) +
+            "XXX".toByteArray(Charsets.ISO_8859_1) +
+            terminator(encoding) +
+            encodeText(encoding, text)
+
+    /**
+     * `TXXX` 帧体：`编码 + 描述符 + 0 + 值`。
+     *
+     * 描述符和值用同一种编码。ReplayGain 的键都是 ASCII，因此在
+     * ISO-8859-1 与 UTF-8 下字节完全一致，两种编码都能被通用播放器读出。
+     */
+    private fun userTextBody(
+        encoding: Int,
+        description: String,
+        value: String,
+    ): ByteArray =
+        byteArrayOf(encoding.toByte()) +
+            encodeText(encoding, description) +
+            terminator(encoding) +
+            encodeText(encoding, value)
 
     private fun pictureBody(
         encoding: Int,

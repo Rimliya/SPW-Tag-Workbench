@@ -224,6 +224,11 @@ object Matching {
             TagField.Composer -> ""
             TagField.Comment -> track.comment
             TagField.Lyrics -> track.lyrics
+            // ReplayGain 不作为匹配来源（在线源不提供），合并时原值保留
+            TagField.ReplayGainTrackGain -> track.replayGainTrackGain
+            TagField.ReplayGainTrackPeak -> track.replayGainTrackPeak
+            TagField.ReplayGainAlbumGain -> track.replayGainAlbumGain
+            TagField.ReplayGainAlbumPeak -> track.replayGainAlbumPeak
         }
 
     /**
