@@ -32,6 +32,7 @@ import io.github.univers629.spwtagworkbench.ui.rememberHostPalette
  */
 object EmbeddedWorkbenchRuntime {
     @Volatile private var started = false
+    val isStarted: Boolean get() = started
 
     @Synchronized
     fun start(pluginId: String, pluginVersion: String, spwVersion: String, pluginPath: String) {
